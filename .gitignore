@@ -1,0 +1,9 @@
+# Godot 4 cache / generated
+.godot/
+*.translation
+# Build outputs and test reports
+build/
+# OS / editor
+.DS_Store
+Thumbs.db
+*.tmp
