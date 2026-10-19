@@ -5,8 +5,8 @@ No milestone may move to Authorized without explicit owner approval.
 
 | Stage | Scope (spec §13) | Status |
 |---|---|---|
-| M0 | Project scaffold, contracts, test harness, initial art assumptions | **In review** (2026-10-19) |
-| M1 | Tiles, finite seeded world, chunks, camera, basic dig/build **+ basic save/load (D-007, proposed)** | Not started |
+| M0 | Project scaffold, contracts, test harness, initial art assumptions | **Closed** (owner approved 2026-10-20) |
+| M1 | Tiles, finite seeded world, chunks, camera, basic dig/build **+ basic save/load (D-007, D-014)** | **Authorized** 2026-10-20 — plan `docs/plans/M1_PLAN.md` awaiting owner approval |
 | M2 | NPC movement, job queue, reservations, hauling | Not started |
 | M3 | Rooms, storage, construction | Not started |
 | M4 | Basic needs, food, power, water, room oxygen | Not started |

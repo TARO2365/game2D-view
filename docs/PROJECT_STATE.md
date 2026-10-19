@@ -1,6 +1,6 @@
 # PROJECT_STATE.md
 
-**Updated:** 2026-10-19 | **Current milestone:** M0 — In review (awaiting owner closure) | **Next authorized:** none
+**Updated:** 2026-10-20 | **M0:** Closed (owner approved) | **M1:** Authorized; plan `docs/plans/M1_PLAN.md` awaiting owner approval — no M1 code yet
 
 ## What exists
 - Godot 4.7.2 project (`project.godot`), GL Compatibility renderer, main scene `scenes/main.tscn`.
@@ -23,5 +23,4 @@ https://github.com/TARO2365/game2D-view (branch `main`). Git auth via Git Creden
 - Node.js available for `tools/serve_web.js`.
 
 ## Next session
-Read CLAUDE.md. If owner closes M0 and authorizes M1, Lead first proposes M1 plan (incl. D-007 save/load,
-OQ-02/06/07/08/14) for approval before coding.
+Read CLAUDE.md. Wait for owner approval of `docs/plans/M1_PLAN.md` (incl. proposals P-1…P-7), then implement M1.
