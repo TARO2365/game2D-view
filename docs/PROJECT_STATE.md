@@ -14,6 +14,9 @@
 ## What does NOT exist yet
 No world, tiles, NPCs, jobs, saving, or any gameplay. No production art.
 
+## Repository
+https://github.com/TARO2365/game2D-view (branch `main`). Git auth via Git Credential Manager; `gh` CLI not logged in.
+
 ## Environment (owner machine)
 - Godot: `%LOCALAPPDATA%\Programs\Godot\` (+ export templates in `%APPDATA%\Godot\export_templates\4.7.2.stable`)
 - GitHub CLI: `%LOCALAPPDATA%\Programs\gh\bin\gh.exe` (both added to user PATH)

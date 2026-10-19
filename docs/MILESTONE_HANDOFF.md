@@ -52,7 +52,7 @@ None yet. `SimulationClock` and `StableIdAllocator` already expose `to_snapshot(
 
 ## 7. Git
 Repository initialized in `game2D-view/`; initial commit "M0: project scaffold, core contracts, test harness".
-GitHub push: pending owner `gh auth login` (see PROJECT_STATE).
+Pushed to https://github.com/TARO2365/game2D-view (branch `main`, initial commit `5a72355`).
 
 ## 8. Deferred / out of scope
 World, tiles, camera, save files, NPCs, any gameplay; production art; mobile builds; minimum spec (D-012).
