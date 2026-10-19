@@ -18,5 +18,6 @@
 | OQ-11 | QA | Web build timing (ticks/sec at 1x/2x/3x) not measured: test browser pane was hidden so `requestAnimationFrame` did not run. | M1 | NOT RUN |
 | OQ-12 | Legal | Originality review vs Oxygen Not Included UI/mechanics. | Before M11 | OPEN |
 | OQ-13 | UX | Touch target sizes (SpeedBar uses 56×44 px placeholder). | UX prototype | OPEN |
-| OQ-14 | Save | "One world": does creating a new world overwrite the old one, or is New World disabled while a save exists? | M1 | OPEN |
+| OQ-14 | Save | "One world": does creating a new world overwrite the old one, or is New World disabled while a save exists? | M1 | RESOLVED → D-014 (max 3 worlds, delete one to create more) |
+| OQ-16 | Spec | Spec §11 still says "One world … do not assume multiple named save slots". D-014 (max 3 worlds) supersedes it; spec text should be updated in v0.2 (owner edit). Also unclear: may worlds be renamed by the player? Web storage quota × 3 worlds (ties to OQ-07). | Before M1 closes | OPEN |
 | OQ-15 | Sim | Tick rate 10 Hz and cadence 1/5/20 ticks are placeholders; real values need profiling (spec §17). | M2 profiling | PLACEHOLDER |
