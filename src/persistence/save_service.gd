@@ -9,7 +9,10 @@ extends RefCounted
 
 enum Kind { MANUAL, AUTO }
 
-const SAVE_VERSION := 1
+## v2 (M2): chunk bytes hold tiles + structures; adds inventory and
+## stockpiles. v1 (M1) saves are migrated on load (see session_from_payload).
+const SAVE_VERSION := 2
+const SUPPORTED_VERSIONS := [1, 2]
 const MAGIC := "LAST_BUNKER_SAVE"
 const FILE_NAMES := {Kind.MANUAL: "manual.save", Kind.AUTO: "autosave.save"}
 const BAK_SUFFIX := ".bak"
@@ -43,6 +46,8 @@ static func build_payload(session: WorldSession) -> Dictionary:
 		"ids": session.ids.to_snapshot(),
 		"chunks": chunks,
 		"designations": session.designations.to_snapshot(),
+		"inventory": session.inventory.to_snapshot(),
+		"stockpiles": session.stockpiles.to_snapshot(),
 		"world_hash": grid.world_hash(),
 	}
 
@@ -120,8 +125,12 @@ static func load_world(dir: String, registry: TileRegistry, meta: Dictionary) ->
 	return CommandResult.failure(&"no_valid_save", "No valid save found", {"errors": errors})
 
 
+## Rebuilds a session from a payload. Migration v1 -> v2: v1 chunk bytes
+## are tiles only (structures empty), the stored hash is the terrain hash,
+## and inventory/stockpiles start empty.
 static func session_from_payload(p: Dictionary, meta: Dictionary, registry: TileRegistry) -> CommandResult:
-	if int(p.get("save_version", -1)) != SAVE_VERSION:
+	var version := int(p.get("save_version", -1))
+	if version not in SUPPORTED_VERSIONS:
 		return CommandResult.failure(&"unsupported_version",
 				"Unsupported save version %s" % p.get("save_version"))
 	var gen := int(p.get("gen_version", -1))
@@ -131,26 +140,30 @@ static func session_from_payload(p: Dictionary, meta: Dictionary, registry: Tile
 	var size_v: Variant = p.get("size")
 	if typeof(size_v) != TYPE_VECTOR2I or size_v.x <= 0 or size_v.y <= 0:
 		return CommandResult.failure(&"corrupt", "Invalid world size")
-	var s := WorldSession.new()
-	s.meta = meta.duplicate()
-	s.meta["seed"] = int(p.get("seed", 0))
-	s.meta["size"] = size_v
-	s.grid = WorldGenerator.generate(s.meta["seed"], size_v, registry)
+	var world_meta := meta.duplicate()
+	world_meta["seed"] = int(p.get("seed", 0))
+	world_meta["size"] = size_v
+	var grid := WorldGenerator.generate(world_meta["seed"], size_v, registry)
 	var chunks: Variant = p.get("chunks", {})
 	if typeof(chunks) != TYPE_DICTIONARY:
 		return CommandResult.failure(&"corrupt", "Invalid chunk data")
 	for idx in chunks:
 		var bytes: Variant = chunks[idx]
 		if typeof(bytes) != TYPE_PACKED_BYTE_ARRAY \
-				or not s.grid.set_chunk_bytes(s.grid.chunk_coords_of_index(int(idx)), bytes):
+				or not grid.set_chunk_bytes(grid.chunk_coords_of_index(int(idx)), bytes):
 			return CommandResult.failure(&"corrupt", "Invalid chunk %s" % idx)
-	if s.grid.world_hash() != p.get("world_hash"):
+	var actual_hash := grid.terrain_hash() if version == 1 else grid.world_hash()
+	if actual_hash != p.get("world_hash"):
 		return CommandResult.failure(&"integrity", "World data does not match its checksum")
+	var s := WorldSession.from_grid(world_meta, grid)
 	s.clock.load_snapshot(p.get("clock", {}))
 	s.ids.load_snapshot(p.get("ids", {}))
-	s.designations = DesignationMap.new(s.grid)
-	var dropped := s.designations.load_snapshot(p.get("designations", {}))
-	return CommandResult.success({"session": s, "dropped_designations": dropped})
+	var dropped := {
+		"designations": s.designations.load_snapshot(p.get("designations", {})),
+		"inventory": s.inventory.load_snapshot(p.get("inventory", {})) if version >= 2 else 0,
+		"stockpiles": s.stockpiles.load_snapshot(p.get("stockpiles", {})) if version >= 2 else 0,
+	}
+	return CommandResult.success({"session": s, "dropped": dropped, "migrated_from": version})
 
 
 static func _read_candidates(dir: String, suffix: String, errors: Array[String]) -> Array:
