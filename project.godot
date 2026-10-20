@@ -25,6 +25,10 @@ window/stretch/aspect="expand"
 
 enabled=PackedStringArray("res://addons/gut/plugin.cfg")
 
+[gui]
+
+theme/custom_font="res://assets/fonts/NotoSansThai-Variable.ttf"
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"

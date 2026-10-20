@@ -43,6 +43,20 @@ func test_new_world_dialog_prefills_name() -> void:
 	_menu().open_new_world_dialog()
 	assert_true(_menu().new_world_overlay.visible)
 	assert_eq(_menu().name_edit.text, "World 1")
+	var seed_text := _menu().seed_edit.text
+	assert_true(seed_text.is_valid_int(), "D-018: seed pre-filled with a random number")
+	_menu().reroll_seed()
+	_menu().reroll_seed()
+	assert_true(_menu().seed_edit.text.is_valid_int())
+
+
+func test_project_font_supports_thai() -> void:
+	var font := ThemeDB.get_project_theme().default_font if ThemeDB.get_project_theme() else null
+	if font == null:
+		font = load(ProjectSettings.get_setting("gui/theme/custom_font")) as Font
+	assert_not_null(font)
+	assert_true(font.has_char("ก".unicode_at(0)), "Thai glyph")
+	assert_true(font.has_char("A".unicode_at(0)), "Latin glyph")
 
 
 func test_create_play_quit_and_continue() -> void:

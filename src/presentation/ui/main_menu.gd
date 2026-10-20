@@ -98,10 +98,15 @@ func open_new_world_dialog() -> void:
 		refresh()
 		return
 	name_edit.text = slots.suggest_name()
-	seed_edit.text = ""
+	reroll_seed()
 	size_option.select(1)
 	new_world_overlay.visible = true
 	name_edit.grab_focus()
+
+
+## D-018: seeds are random by default; the player may still type one.
+func reroll_seed() -> void:
+	seed_edit.text = str(WorldGenerator.seed_from_text(""))
 
 
 func close_new_world_dialog() -> void:
@@ -185,7 +190,9 @@ func _build_new_world_overlay() -> void:
 	seed_edit = LineEdit.new()
 	seed_edit.placeholder_text = "Blank = random"
 	seed_edit.custom_minimum_size.y = 44
-	box.add_child(_labeled("Seed", seed_edit))
+	var seed_row := _labeled("Seed", seed_edit)
+	seed_row.add_child(_button("Random", reroll_seed))
+	box.add_child(seed_row)
 	size_option = OptionButton.new()
 	size_option.custom_minimum_size.y = 44
 	for key in WorldGenerator.PRESETS:
