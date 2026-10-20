@@ -1,6 +1,6 @@
 # PROJECT_STATE.md
 
-**Updated:** 2026-10-20 | **M0:** Closed | **M1:** In review (awaiting owner closure) | **Next authorized:** none
+**Updated:** 2026-10-20 | **M0, M1:** Closed | **M2:** Authorized; plan `docs/plans/M2_PLAN.md` awaiting owner approval — no M2 code yet
 
 ## What exists (playable)
 - App shell: main menu with up to 3 stored worlds (one played at a time), New World dialog (name, seed, size), delete with confirmation.
