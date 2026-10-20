@@ -214,10 +214,9 @@ func test_stockpile_removed_and_floor_dug_mid_haul() -> void:
 
 # --- Walls over items / NPCs (deadlock hunting) ----------------------------
 
-## BUG (see docs/qa/M2_QA_REPORT.md QA-1): the builder keeps the wall job and
-## waits forever for "items in the way" that only it could haul away.
-## Confirmed failing without pending() on 2026-10-20 (wall never built in
-## 3000 ticks; NPC idle at (11, 9) holding job:1 "items in the way").
+## Regression for QA-1 (docs/qa/M2_QA_REPORT.md): the builder used to keep the
+## wall job and wait forever for "items in the way" that only it could haul.
+## Failed on 351c5dc; FIXED in 0cfeef2 (wall "clear" phase), passes since.
 func test_wall_items_in_way_single_npc_no_deadlock() -> void:
 	_setup(Vector2i(40, 30))
 	sp.designate(Rect2i(30, 9, 2, 1))
@@ -244,9 +243,8 @@ func test_wall_blocked_by_idle_npc_resolves_without_player() -> void:
 
 ## Two adjacent wall orders; each builder ends up standing on the OTHER's wall
 ## tile and waits for the other to leave.
-## BUG QA-3: confirmed failing without pending() on 2026-10-20: after 3000
-## ticks npc:1 at (13, 9) holds job:1 "Build wall (12, 9) - blocked by NPC" and
-## npc:2 at (12, 9) holds job:2 "Build wall (13, 9) - blocked by NPC".
+## Regression for QA-3: failed on 351c5dc (both NPCs held "blocked by NPC"
+## forever); FIXED in 0cfeef2 (work spots off wall orders + step aside).
 func test_two_builders_on_each_others_wall_tiles_no_deadlock() -> void:
 	_setup(Vector2i(40, 30))
 	inv.spawn_ground(&"rock", 50.0, Vector2i(21, 9))
@@ -263,8 +261,8 @@ func test_two_builders_on_each_others_wall_tiles_no_deadlock() -> void:
 
 ## Stockpile on top of a 3-tile pillar (no ladder): nobody can deliver there.
 ## The loose item must not be picked up and dropped again forever.
-## BUG QA-4: confirmed failing without pending() on 2026-10-20: 20 pick-ups in
-## 3000 ticks, the stack is dropped back next to where it lay each time.
+## Regression for QA-4: failed on 351c5dc (20 pick-ups in 3000 ticks); FIXED
+## in 0cfeef2 (per-NPC blocked drop tiles): 1 pick-up in 3000 ticks.
 func test_unreachable_stockpile_no_pickup_livelock() -> void:
 	_setup(Vector2i(40, 30))
 	g.apply_edit(Rect2i(30, 6, 1, 4), WorldGrid.Edit.BUILD_WALL)   # pillar rows 6..9
