@@ -10,6 +10,11 @@ extends RefCounted
 ##
 ## Conservation invariant (per material, ± KG_EPSILON):
 ##     spawned_kg == total_kg + consumed_kg
+##
+## Queries per ground tile / site / crate use incremental indexes (M3-QA-6),
+## updated by every mutation here and rebuilt by load_snapshot; kg sums are
+## taken in id order so results equal a full scan bit for bit.
+## verify_indexes() checks them (tests, QA).
 
 ## Emitted for every create/move/split/consume/remove of an item.
 ## load_snapshot() emits it once with an empty id ("everything changed").
@@ -21,11 +26,28 @@ const CARRY_CAPACITY_KG := 200.0  # PLACEHOLDER (spec §17 tuning)
 const KG_EPSILON := 0.001
 const ID_CATEGORY := &"item"
 
+## Items of one ground tile, site or crate (M3-QA-6 index). The sorted list
+## and the kg sum are rebuilt lazily (in id order, so results are bit-identical
+## to a full scan) only after the bucket changed.
+class Bucket:
+	extends RefCounted
+	var items: Dictionary = {}           # item id -> ItemStack
+	var sorted: Array[ItemStack] = []    # valid when not dirty
+	var kg: float = 0.0                  # valid when not dirty
+	var dirty: bool = true
+
+
 var _ids: StableIdAllocator
 var _items: Dictionary = {}      # item id -> ItemStack (insertion order = creation order)
 var _carried: Dictionary = {}    # npc id -> item id
 var _spawned: Dictionary = {}    # StringName material -> float kg (lifetime)
 var _consumed: Dictionary = {}   # StringName material -> float kg (lifetime)
+# Indexes (derived, never saved; rebuilt by load_snapshot; see verify_indexes):
+var _ground: Dictionary = {}     # Vector2i tile -> Bucket (GROUND items)
+var _sites: Dictionary = {}      # job id -> Bucket (SITE items)
+var _crates: Dictionary = {}     # building id -> Bucket (CRATE items)
+var _all_sorted: Array[ItemStack] = []   # all items by id number, valid when not _all_dirty
+var _all_dirty: bool = true
 
 
 func _init(ids: StableIdAllocator) -> void:
@@ -40,29 +62,22 @@ func get_item(id: String) -> ItemStack:
 
 ## All existing items, ordered by id number (deterministic).
 func all_items() -> Array[ItemStack]:
-	var out: Array[ItemStack] = []
-	for it in _items.values():
-		out.append(it)
-	out.sort_custom(_less_by_id)
-	return out
+	if _all_dirty:
+		_all_sorted.clear()
+		for it: ItemStack in _items.values():
+			_all_sorted.append(it)
+		_all_sorted.sort_custom(_less_by_id)
+		_all_dirty = false
+	return _all_sorted.duplicate()
 
 
 ## Ground items on that tile, ordered by id number.
 func items_at(tile: Vector2i) -> Array[ItemStack]:
-	var out: Array[ItemStack] = []
-	for it: ItemStack in _items.values():
-		if it.holder == Holder.GROUND and it.tile == tile:
-			out.append(it)
-	out.sort_custom(_less_by_id)
-	return out
+	return _bucket_items(_ground.get(tile))
 
 
 func ground_kg_at(tile: Vector2i) -> float:
-	var sum := 0.0
-	for it: ItemStack in _items.values():
-		if it.holder == Holder.GROUND and it.tile == tile:
-			sum += it.kg
-	return sum
+	return _bucket_kg(_ground.get(tile))
 
 
 func carried_by(npc_id: String) -> ItemStack:
@@ -71,40 +86,20 @@ func carried_by(npc_id: String) -> ItemStack:
 
 
 func site_items(job_id: String) -> Array[ItemStack]:
-	var out: Array[ItemStack] = []
-	if job_id.is_empty():
-		return out
-	for it: ItemStack in _items.values():
-		if it.holder == Holder.SITE and it.holder_id == job_id:
-			out.append(it)
-	out.sort_custom(_less_by_id)
-	return out
+	return _bucket_items(_sites.get(job_id))
 
 
 func site_kg(job_id: String) -> float:
-	var sum := 0.0
-	for it in site_items(job_id):
-		sum += it.kg
-	return sum
+	return _bucket_kg(_sites.get(job_id))
 
 
 ## Items stored in that crate building, ordered by id number.
 func crate_items(building_id: String) -> Array[ItemStack]:
-	var out: Array[ItemStack] = []
-	if building_id.is_empty():
-		return out
-	for it: ItemStack in _items.values():
-		if it.holder == Holder.CRATE and it.holder_id == building_id:
-			out.append(it)
-	out.sort_custom(_less_by_id)
-	return out
+	return _bucket_items(_crates.get(building_id))
 
 
 func crate_kg(building_id: String) -> float:
-	var sum := 0.0
-	for it in crate_items(building_id):
-		sum += it.kg
-	return sum
+	return _bucket_kg(_crates.get(building_id))
 
 
 func total_kg_by_material() -> Dictionary:
@@ -155,6 +150,8 @@ func spawn_ground(material: StringName, kg: float, tile: Vector2i) -> String:
 	it.holder = Holder.GROUND
 	it.tile = tile
 	_items[it.id] = it
+	_all_dirty = true
+	_index(it)
 	_spawned[material] = float(_spawned.get(material, 0.0)) + kg
 	items_changed.emit(it.id)
 	return it.id
@@ -192,6 +189,7 @@ func drop(npc_id: String, tile: Vector2i) -> CommandResult:
 	it.holder = Holder.GROUND
 	it.holder_id = ""
 	it.tile = tile
+	_index(it)
 	items_changed.emit(it.id)
 	return CommandResult.success({"item_id": it.id, "kg": it.kg})
 
@@ -206,7 +204,9 @@ func relocate_ground(item_id: String, tile: Vector2i) -> CommandResult:
 		return CommandResult.failure(&"not_on_ground", "%s is not on the ground" % item_id)
 	if it.tile == tile:
 		return CommandResult.success({"item_id": it.id, "moved": false})
+	_unindex(it)
 	it.tile = tile
+	_index(it)
 	items_changed.emit(it.id)
 	return CommandResult.success({"item_id": it.id, "moved": true})
 
@@ -222,6 +222,7 @@ func deliver_to_site(npc_id: String, job_id: String) -> CommandResult:
 	it.holder = Holder.SITE
 	it.holder_id = job_id
 	it.tile = Vector2i(-1, -1)
+	_index(it)
 	items_changed.emit(it.id)
 	return CommandResult.success({"item_id": it.id, "kg": it.kg, "site_kg": site_kg(job_id)})
 
@@ -233,6 +234,8 @@ func consume_site(job_id: String) -> CommandResult:
 		return CommandResult.failure(&"nothing_at_site", "No materials delivered to %s" % job_id)
 	var total := 0.0
 	var ids: Array[String] = []
+	_sites.erase(job_id)
+	_all_dirty = true
 	for it in list:
 		_items.erase(it.id)
 		_consumed[it.material] = float(_consumed.get(it.material, 0.0)) + it.kg
@@ -250,10 +253,12 @@ func return_site_to_ground(job_id: String, tile: Vector2i) -> CommandResult:
 		return CommandResult.failure(&"nothing_at_site", "No materials delivered to %s" % job_id)
 	var total := 0.0
 	var ids: Array[String] = []
+	_sites.erase(job_id)
 	for it in list:
 		it.holder = Holder.GROUND
 		it.holder_id = ""
 		it.tile = tile
+		_index(it)
 		total += it.kg
 		ids.append(it.id)
 	for id in ids:
@@ -273,6 +278,7 @@ func store_in_crate(npc_id: String, building_id: String) -> CommandResult:
 	it.holder = Holder.CRATE
 	it.holder_id = building_id
 	it.tile = Vector2i(-1, -1)
+	_index(it)
 	items_changed.emit(it.id)
 	return CommandResult.success({"item_id": it.id, "kg": it.kg,
 			"crate_kg": crate_kg(building_id)})
@@ -310,10 +316,13 @@ func empty_crate_to_ground(building_id: String, tile: Vector2i) -> CommandResult
 		return CommandResult.failure(&"invalid_building", "No crate given")
 	var total := 0.0
 	var ids: Array[String] = []
-	for it in crate_items(building_id):
+	var list := crate_items(building_id)
+	_crates.erase(building_id)
+	for it in list:
 		it.holder = Holder.GROUND
 		it.holder_id = ""
 		it.tile = tile
+		_index(it)
 		total += it.kg
 		ids.append(it.id)
 	for id in ids:
@@ -347,6 +356,11 @@ func load_snapshot(s: Dictionary) -> int:
 	_carried.clear()
 	_spawned.clear()
 	_consumed.clear()
+	_ground.clear()
+	_sites.clear()
+	_crates.clear()
+	_all_sorted.clear()
+	_all_dirty = true
 	var dropped := 0
 	var items_v: Variant = s.get("items")
 	if typeof(items_v) == TYPE_ARRAY:
@@ -361,6 +375,7 @@ func load_snapshot(s: Dictionary) -> int:
 					continue  # one stack per NPC
 				_carried[it.holder_id] = it.id
 			_items[it.id] = it
+			_index(it)
 	_consumed = _ledger_in(s.get("consumed"))
 	var totals := total_kg_by_material()
 	for m in totals:
@@ -421,12 +436,154 @@ func _take(it: ItemStack, npc_id: String, max_kg: float) -> ItemStack:
 		picked.material = it.material
 		picked.kg = max_kg
 		it.kg -= max_kg
+		_touch(it)
 		_items[picked.id] = picked
+		_all_dirty = true
+	else:
+		_unindex(it)
 	picked.holder = Holder.NPC
 	picked.holder_id = npc_id
 	picked.tile = Vector2i(-1, -1)
 	_carried[npc_id] = picked.id
 	return picked
+
+
+## Debug consistency check of the derived indexes against _items (tests and
+## QA call it after random walks). Empty array = every index is consistent.
+func verify_indexes() -> Array[String]:
+	var errors: Array[String] = []
+	var expect := {}   # "g|tile" / "s|job" / "c|bld" -> {item id: true}
+	for it: ItemStack in _items.values():
+		if it.holder == Holder.NPC:
+			if _carried.get(it.holder_id, "") != it.id:
+				errors.append("%s held by %s but _carried says %s" % [it.id, it.holder_id,
+						_carried.get(it.holder_id, "")])
+			continue
+		var key := _debug_key(it.holder, it.tile if it.holder == Holder.GROUND else it.holder_id)
+		if not expect.has(key):
+			expect[key] = {}
+		expect[key][it.id] = true
+	for npc: String in _carried:
+		var c: ItemStack = _items.get(_carried[npc])
+		if c == null or c.holder != Holder.NPC or c.holder_id != npc:
+			errors.append("_carried[%s] = %s is stale" % [npc, _carried[npc]])
+	var seen := 0
+	for pair: Array in [[Holder.GROUND, _ground], [Holder.SITE, _sites], [Holder.CRATE, _crates]]:
+		var index: Dictionary = pair[1]
+		for k: Variant in index:
+			var b: Bucket = index[k]
+			var key := _debug_key(pair[0], k)
+			seen += 1
+			if b.items.is_empty():
+				errors.append("empty bucket %s" % key)
+				continue
+			var want: Dictionary = expect.get(key, {})
+			if want.size() != b.items.size():
+				errors.append("bucket %s has %d items, expected %d" % [key, b.items.size(), want.size()])
+			for id: String in b.items:
+				if not want.has(id) or _items.get(id) != b.items[id]:
+					errors.append("bucket %s holds stale %s" % [key, id])
+			var list := _bucket_items(b)
+			if list.size() != b.items.size():
+				errors.append("bucket %s cached list is stale" % key)
+			var sum := 0.0
+			for i in list.size():
+				sum += list[i].kg
+				if i > 0 and not _less_by_id(list[i - 1], list[i]):
+					errors.append("bucket %s not sorted by id" % key)
+			if sum != b.kg:
+				errors.append("bucket %s kg %.6f != %.6f" % [key, b.kg, sum])
+	if seen != expect.size():
+		errors.append("%d buckets, expected %d" % [seen, expect.size()])
+	var all := all_items()
+	if all.size() != _items.size():
+		errors.append("all_items has %d, expected %d" % [all.size(), _items.size()])
+	for i in range(1, all.size()):
+		if not _less_by_id(all[i - 1], all[i]):
+			errors.append("all_items not sorted at %d" % i)
+			break
+	return errors
+
+
+func _debug_key(holder: int, k: Variant) -> String:
+	return "%d|%s" % [holder, k]
+
+
+func _index_of(holder: int) -> Variant:
+	match holder:
+		Holder.GROUND:
+			return _ground
+		Holder.SITE:
+			return _sites
+		Holder.CRATE:
+			return _crates
+	return null
+
+
+func _index(it: ItemStack) -> void:
+	var index: Variant = _index_of(it.holder)
+	if index == null:
+		return
+	var key: Variant = it.tile if it.holder == Holder.GROUND else it.holder_id
+	var b: Bucket = (index as Dictionary).get(key)
+	if b == null:
+		b = Bucket.new()
+		index[key] = b
+	b.items[it.id] = it
+	b.dirty = true
+
+
+func _unindex(it: ItemStack) -> void:
+	var index: Variant = _index_of(it.holder)
+	if index == null:
+		return
+	var key: Variant = it.tile if it.holder == Holder.GROUND else it.holder_id
+	var b: Bucket = (index as Dictionary).get(key)
+	if b == null:
+		return
+	b.items.erase(it.id)
+	if b.items.is_empty():
+		(index as Dictionary).erase(key)
+	else:
+		b.dirty = true
+
+
+## The item's kg changed in place (split): its bucket's sum is stale.
+func _touch(it: ItemStack) -> void:
+	var index: Variant = _index_of(it.holder)
+	if index == null:
+		return
+	var b: Bucket = (index as Dictionary).get(it.tile if it.holder == Holder.GROUND else it.holder_id)
+	if b != null:
+		b.dirty = true
+
+
+func _refresh(b: Bucket) -> void:
+	if not b.dirty:
+		return
+	b.sorted.clear()
+	for it: ItemStack in b.items.values():
+		b.sorted.append(it)
+	b.sorted.sort_custom(_less_by_id)
+	b.kg = 0.0
+	for it in b.sorted:
+		b.kg += it.kg
+	b.dirty = false
+
+
+func _bucket_items(b: Bucket) -> Array[ItemStack]:
+	if b == null:
+		var none: Array[ItemStack] = []
+		return none
+	_refresh(b)
+	return b.sorted.duplicate()
+
+
+func _bucket_kg(b: Bucket) -> float:
+	if b == null:
+		return 0.0
+	_refresh(b)
+	return b.kg
 
 
 static func _ledger_out(src: Dictionary) -> Dictionary:

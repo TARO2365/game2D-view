@@ -31,11 +31,21 @@ var _known: Dictionary = {}       # crate building id -> true (last seen set)
 var _filters: Dictionary = {}     # building id -> Array[StringName] (sorted, unique, non-empty)
 var _bookings: Dictionary = {}    # job id -> {"building_id": String, "kg": float}
 var _booked: Dictionary = {}      # building id -> float total booked kg
+# Crate cache (M3-QA-6): rebuilt lazily after buildings_changed / building_lost /
+# load_snapshot, or when the provider's count() differs (Buildings.load_snapshot
+# emits no signal).
+var _cache_ok: bool = false
+var _crate_list: Array[String] = []   # sorted by id number
+var _cap: Dictionary = {}             # crate id -> storage_kg (> 0)
+var _origins: Dictionary = {}         # crate id -> Vector2i origin
+var _seen_count: int = -1
+var _has_count: bool = false
 
 
 func _init(buildings: RefCounted, inv: Inventory) -> void:
 	_buildings = buildings
 	inventory = inv
+	_has_count = _buildings.has_method(&"count")
 	_buildings.connect(&"buildings_changed", _on_buildings_changed)
 	_buildings.connect(&"building_lost", _on_building_lost)
 	for id in crate_ids():
@@ -46,18 +56,13 @@ func _init(buildings: RefCounted, inv: Inventory) -> void:
 
 ## Ids of all crate buildings, ordered by id number (deterministic).
 func crate_ids() -> Array[String]:
-	var out: Array[String] = []
-	var all: Array = _buildings.call(&"all_ids")
-	for v: Variant in all:
-		var id := String(v)
-		if _storage_kg(id) > 0.0:
-			out.append(id)
-	out.sort_custom(_less_id)
-	return out
+	_ensure_cache()
+	return _crate_list.duplicate()
 
 
 func is_crate(building_id: String) -> bool:
-	return _storage_kg(building_id) > 0.0
+	_ensure_cache()
+	return _cap.has(building_id)
 
 
 ## Empty array = accepts every material.
@@ -82,7 +87,8 @@ func booked_kg(building_id: String) -> float:
 
 ## 0 for ids that are not crates; never negative.
 func free_capacity(building_id: String) -> float:
-	var cap := _storage_kg(building_id)
+	_ensure_cache()
+	var cap: float = _cap.get(building_id, 0.0)
 	if cap <= 0.0:
 		return 0.0
 	return maxf(0.0, cap - inventory.crate_kg(building_id) - booked_kg(building_id))
@@ -103,16 +109,26 @@ func find_crate(material: StringName, kg: float, near: Vector2i) -> String:
 	var best := ""
 	var best_d := 0
 	var best_o := Vector2i.ZERO
-	for id in crate_ids():  # id order, so equal distance + origin keeps the lower id
-		if not accepts(id, material) or free_capacity(id) + Inventory.KG_EPSILON < kg:
-			continue
-		var o := _origin(id)
+	if String(material).is_empty():
+		return ""
+	_ensure_cache()
+	# One pass over the cached crates (O(crates), each check O(1) thanks to the
+	# Inventory crate index). Distance/tie rank is tested first, so the
+	# filter and capacity lookups only run for crates that could win.
+	for id in _crate_list:  # id order, so equal distance + origin keeps the lower id
+		var o: Vector2i = _origins[id]
 		var d := absi(o.x - near.x) + absi(o.y - near.y)
-		if best.is_empty() or d < best_d or (d == best_d and (o.y < best_o.y
-				or (o.y == best_o.y and o.x < best_o.x))):
-			best = id
-			best_d = d
-			best_o = o
+		if not best.is_empty() and (d > best_d or (d == best_d and (o.y > best_o.y
+				or (o.y == best_o.y and o.x >= best_o.x)))):
+			continue
+		var f: Variant = _filters.get(id)
+		if f != null and not (f as Array).has(material):
+			continue
+		if free_capacity(id) + Inventory.KG_EPSILON < kg:
+			continue
+		best = id
+		best_d = d
+		best_o = o
 	return best
 
 
@@ -207,6 +223,7 @@ func load_snapshot(s: Dictionary) -> int:
 	_bookings.clear()
 	_booked.clear()
 	_known.clear()
+	_cache_ok = false
 	for id in crate_ids():
 		_known[id] = true
 	var dropped := 0
@@ -270,6 +287,7 @@ func _load_booking(e: Variant) -> bool:
 # --- Internals ----------------------------------------------------------
 
 func _on_buildings_changed(_rect: Rect2i) -> void:
+	_cache_ok = false
 	var now := {}
 	for id in crate_ids():
 		now[id] = true
@@ -286,6 +304,7 @@ func _on_buildings_changed(_rect: Rect2i) -> void:
 
 
 func _on_building_lost(id: String, _key: StringName, _origin: Vector2i, _materials: Dictionary) -> void:
+	_cache_ok = false
 	if _known.has(id) or _filters.has(id) or _booked.has(id):
 		_forget(id)
 
@@ -308,11 +327,30 @@ func _add_booking(job_id: String, building_id: String, kg: float) -> void:
 	_booked[building_id] = booked_kg(building_id) + kg
 
 
+func _ensure_cache() -> void:
+	if _cache_ok and (not _has_count or int(_buildings.call(&"count")) == _seen_count):
+		return
+	_crate_list.clear()
+	_cap.clear()
+	_origins.clear()
+	var all: Array = _buildings.call(&"all_ids")
+	for v: Variant in all:
+		var id := String(v)
+		var b: Dictionary = _buildings.call(&"get_building", id)
+		var kg := _storage_kg_of(b)
+		if kg <= 0.0:
+			continue
+		var o: Variant = b.get("origin", Vector2i.ZERO)
+		_crate_list.append(id)
+		_cap[id] = kg
+		_origins[id] = o if typeof(o) == TYPE_VECTOR2I else Vector2i.ZERO
+	_crate_list.sort_custom(_less_id)
+	_seen_count = int(_buildings.call(&"count")) if _has_count else -1
+	_cache_ok = true
+
+
 ## storage_kg of the building's definition; 0 if unknown or not a crate.
-func _storage_kg(id: String) -> float:
-	if id.is_empty():
-		return 0.0
-	var b: Dictionary = _buildings.call(&"get_building", id)
+func _storage_kg_of(b: Dictionary) -> float:
 	if b.is_empty():
 		return 0.0
 	var d: Variant = _buildings.call(&"def", b.get("key", &""))
@@ -323,12 +361,6 @@ func _storage_kg(id: String) -> float:
 		return 0.0
 	var kg := float(v)
 	return kg if is_finite(kg) and kg > 0.0 else 0.0
-
-
-func _origin(id: String) -> Vector2i:
-	var b: Dictionary = _buildings.call(&"get_building", id)
-	var o: Variant = b.get("origin", Vector2i.ZERO)
-	return o if typeof(o) == TYPE_VECTOR2I else Vector2i.ZERO
 
 
 static func _id_num(id: String) -> int:

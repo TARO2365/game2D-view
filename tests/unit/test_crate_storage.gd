@@ -39,6 +39,13 @@ class FakeBuildings extends RefCounted:
 			out.append(id)
 		return out
 
+	func count() -> int:
+		return placed.size()
+
+	## Like Buildings.load_snapshot: replaces everything, emits no signal.
+	func load_silently(entries: Dictionary) -> void:
+		placed = entries.duplicate(true)
+
 	func place(key: StringName, origin: Vector2i) -> String:
 		var id := "bld:%d" % next_num
 		next_num += 1
@@ -326,3 +333,122 @@ func test_load_garbage_snapshot_is_empty() -> void:
 	assert_eq(cs.to_snapshot(), {"filters": [], "bookings": []})
 	assert_eq(cs.load_snapshot({"filters": "x", "bookings": 5}), 0)
 	assert_eq(cs.free_capacity(a), 2000.0)
+
+
+func test_cache_follows_silent_buildings_load() -> void:
+	var a := bld.place(&"crate", Vector2i(5, 9))
+	assert_eq(cs.crate_ids(), [a] as Array[String])
+	# Buildings.load_snapshot emits nothing; a different building count must
+	# still refresh the cached crate list.
+	bld.load_silently({
+		"bld:7": {"id": "bld:7", "key": &"crate", "origin": Vector2i(2, 9), "materials": {}},
+		"bld:3": {"id": "bld:3", "key": &"small_crate", "origin": Vector2i(4, 9), "materials": {}},
+	})
+	assert_eq(cs.crate_ids(), ["bld:3", "bld:7"] as Array[String])
+	assert_eq(cs.free_capacity("bld:3"), 100.0)
+	assert_eq(cs.free_capacity(a), 0.0)
+	assert_eq(cs.find_crate(&"rock", 10.0, Vector2i(0, 9)), "bld:7")
+	# Same count, different ids: CrateStorage.load_snapshot (save order) refreshes.
+	bld.load_silently({
+		"bld:9": {"id": "bld:9", "key": &"crate", "origin": Vector2i(1, 9), "materials": {}},
+		"bld:10": {"id": "bld:10", "key": &"bed", "origin": Vector2i(3, 9), "materials": {}},
+	})
+	cs.load_snapshot({})
+	assert_eq(cs.crate_ids(), ["bld:9"] as Array[String])
+	cs.crate_ids().clear()
+	assert_eq(cs.crate_ids().size(), 1, "crate_ids returns a copy")
+
+
+## Reference implementation of find_crate (pre-M3-QA-6 full scan): nearest
+## by Manhattan distance to the origin, ties smaller y, x, id number.
+func _brute_find(material: StringName, kg: float, near: Vector2i) -> String:
+	var best := ""
+	var bd := 0
+	var bo := Vector2i.ZERO
+	for id in cs.crate_ids():  # id order
+		if not cs.accepts(id, material) or cs.free_capacity(id) + Inventory.KG_EPSILON < kg:
+			continue
+		var o: Vector2i = bld.get_building(id)["origin"]
+		var d := absi(o.x - near.x) + absi(o.y - near.y)
+		if best.is_empty() or d < bd or (d == bd and (o.y < bo.y or (o.y == bo.y and o.x < bo.x))):
+			best = id
+			bd = d
+			bo = o
+	return best
+
+
+func test_find_crate_matches_full_scan() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 77
+	var mats: Array[StringName] = [&"dirt", &"rock", &"iron_ore"]
+	for i in 40:
+		var r := rng.randf()
+		var key := &"crate" if r < 0.6 else (&"small_crate" if r < 0.8 else &"bed")
+		bld.place(key, Vector2i(rng.randi_range(0, 12), rng.randi_range(0, 12)))  # many ties
+	var cids := cs.crate_ids()
+	for id in cids:
+		if rng.randf() < 0.4:
+			cs.set_filter(id, [mats[rng.randi_range(0, 2)]] as Array[StringName])
+		if rng.randf() < 0.5:
+			_store(mats[rng.randi_range(0, 2)], rng.randf_range(10.0, 1900.0), id)
+		if rng.randf() < 0.3:
+			cs.book(id, rng.randf_range(1.0, 500.0), "job:%d" % rng.randi_range(1, 1000))
+	var found := 0
+	for q in 400:
+		var m := mats[rng.randi_range(0, 2)]
+		var kg := rng.randf_range(1.0, 2600.0)  # > 2000 never fits
+		var near := Vector2i(rng.randi_range(-3, 15), rng.randi_range(-3, 15))
+		var want := _brute_find(m, kg, near)
+		var got := cs.find_crate(m, kg, near)
+		if got != want:
+			fail_test("query %d (%s %.1f kg near %s): got %s, full scan %s" % [q, m, kg, near, got, want])
+			return
+		if not got.is_empty():
+			found += 1
+	assert_gt(found, 100, "the queries found crates")
+	assert_gt(400 - found, 10, "and some found none")
+	assert_eq(inv.verify_indexes(), [] as Array[String])
+
+
+## Micro-benchmark for M3-QA-6 (60 crates, 2000 stacks: 1000 in crates, 1000
+## on the ground). Prints per-call costs; the bounds are loose (CI noise) but
+## far below the 23.5 ms per find_crate measured by QA before the fix.
+func test_bench_crate_queries() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 3
+	for i in 60:
+		bld.place(&"crate", Vector2i(30 + i * 15, 20 + (i % 5)))
+	for i in 30:
+		bld.place(&"bed", Vector2i(36 + i * 15, 20))
+	var cids := cs.crate_ids()
+	for i in 1000:
+		_store(&"dirt" if rng.randf() < 0.6 else &"rock", rng.randf_range(1.0, 2.0), cids[i % cids.size()])
+	for i in 1000:
+		inv.spawn_ground(&"dirt", rng.randf_range(10.0, 150.0), Vector2i(rng.randi_range(0, 900), 9))
+	for i in 60:
+		cs.book(cids[i], 10.0, "job:%d" % (i + 1))
+	assert_eq(inv.all_items().size(), 2000)
+	var n := 1000
+	var t0 := Time.get_ticks_usec()
+	for i in n:
+		cs.crate_ids()
+	var t1 := Time.get_ticks_usec()
+	for i in n:
+		cs.free_capacity(cids[i % cids.size()])
+	var t2 := Time.get_ticks_usec()
+	for i in n:
+		cs.find_crate(&"dirt", 50.0, Vector2i((i * 37) % 900, 9))
+	var t3 := Time.get_ticks_usec()
+	for i in n:
+		inv.crate_kg(cids[i % cids.size()])
+		inv.ground_kg_at(Vector2i(i % 900, 9))
+	var t4 := Time.get_ticks_usec()
+	var ids_ms := (t1 - t0) / 1000.0 / n
+	var free_ms := (t2 - t1) / 1000.0 / n
+	var find_ms := (t3 - t2) / 1000.0 / n
+	var kg_ms := (t4 - t3) / 1000.0 / n
+	gut.p("M3-QA-6 bench (60 crates, 2000 stacks), ms per call: crate_ids %.4f  free_capacity %.4f  find_crate %.4f  crate_kg+ground_kg_at %.4f" % [
+			ids_ms, free_ms, find_ms, kg_ms])
+	assert_lt(find_ms, 1.0, "find_crate well under 1 ms (was 23.5 ms)")
+	assert_lt(free_ms, 0.1, "free_capacity well under 0.1 ms (was 0.37 ms)")
+	assert_lt(ids_ms, 0.1, "crate_ids well under 0.1 ms (was 1.34 ms)")
