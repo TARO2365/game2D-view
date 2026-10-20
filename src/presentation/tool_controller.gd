@@ -266,7 +266,7 @@ func _draw() -> void:
 		var rect := Rect2(Vector2(fp.position * tile_px), Vector2(fp.size * tile_px))
 		var col := PREVIEW_OK if preview_result.ok else PREVIEW_BAD
 		draw_rect(rect, Color(col, 0.25))
-		BuildingView.draw_shape(self, place_key, rect, -1.0, 0.55)
+		BuildingView.draw_art(self, place_key, rect, 0.55)
 		draw_rect(rect, col, false, 3.0)
 		return
 	if not _dragging:

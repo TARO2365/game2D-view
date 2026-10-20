@@ -9,7 +9,7 @@ signal quit_requested
 
 const AUTOSAVE_INTERVAL_SEC := 300.0  # PLACEHOLDER
 const TOAST_SECONDS := 3.5
-const INSPECTOR_TOP := 190.0  # below the debug HUD. PLACEHOLDER layout
+const INSPECTOR_TOP := 236.0  # below the debug HUD. PLACEHOLDER layout
 
 var session: WorldSession
 var slots: WorldSlots
@@ -17,14 +17,18 @@ var scale_config: ScaleConfig
 var load_notice := ""
 
 var world_view: WorldView
+var building_view: BuildingView
 var item_view: ItemView
 var overlay: DesignationOverlay
+var room_overlay: RoomOverlay
 var npc_layer: NpcLayer
 var tools: ToolController
 var camera: CameraController
 var speed_bar: SpeedBar
 var toolbar: Toolbar
 var inspector: NpcInspector
+var building_inspector: BuildingInspector
+var build_menu: BuildMenu
 var debug_hud: Label
 var toast: Label
 
@@ -32,6 +36,8 @@ var last_tick_ms := 0.0
 var autosave_left := AUTOSAVE_INTERVAL_SEC
 ## Id of the NPC shown in the inspector, "" when none.
 var selected_npc_id := ""
+## Id of the building shown in the building inspector, "" when none.
+var selected_building_id := ""
 ## True while "Move here" waits for a world click.
 var move_pending := false
 
@@ -54,6 +60,14 @@ func _ready() -> void:
 	world_view.name = "WorldView"
 	world_view.setup(session.grid, px)
 	add_child(world_view)
+	building_view = BuildingView.new()
+	building_view.name = "Buildings"
+	building_view.setup(session.buildings, session.inventory, px)
+	add_child(building_view)
+	room_overlay = RoomOverlay.new()
+	room_overlay.name = "Rooms"
+	room_overlay.setup(session.rooms, px)
+	add_child(room_overlay)
 	item_view = ItemView.new()
 	item_view.name = "Items"
 	item_view.setup(session.inventory, registry, px)
@@ -61,6 +75,7 @@ func _ready() -> void:
 	overlay = DesignationOverlay.new()
 	overlay.name = "Designations"
 	overlay.setup(session.designations, px, session.stockpiles, session.jobs)
+	overlay.set_build_orders(session.build_orders)
 	add_child(overlay)
 	npc_layer = NpcLayer.new()
 	npc_layer.name = "Npcs"
@@ -71,6 +86,7 @@ func _ready() -> void:
 	tools.setup(session, px)
 	tools.command_result.connect(_on_command_result)
 	tools.tile_clicked.connect(click_tile)
+	tools.cancel_requested.connect(func() -> void: set_tool(ToolController.Tool.SELECT))
 	add_child(tools)
 	camera = CameraController.new()
 	camera.name = "Camera"
@@ -94,10 +110,20 @@ func _ready() -> void:
 	toolbar = Toolbar.new()
 	top.add_child(toolbar)
 	toolbar.tool_selected.connect(set_tool)
+	toolbar.build_menu_requested.connect(open_build_menu)
+	toolbar.rooms_toggled.connect(set_rooms_visible)
 	toolbar.priority_selected.connect(set_priority)
 	toolbar.zoom_requested.connect(func(f: float) -> void: camera.zoom_by_center(f))
 	toolbar.save_requested.connect(func() -> void: save_now(SaveService.Kind.MANUAL))
 	toolbar.menu_requested.connect(quit_to_menu)
+	build_menu = BuildMenu.new()
+	build_menu.name = "BuildMenu"
+	build_menu.setup(session.buildings.registry.all_defs(), registry)
+	build_menu.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	build_menu.visible = false
+	build_menu.building_chosen.connect(start_placement)
+	build_menu.close_requested.connect(close_build_menu)
+	top.add_child(build_menu)
 	debug_hud = Label.new()
 	debug_hud.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	debug_hud.offset_left = -360
@@ -117,6 +143,17 @@ func _ready() -> void:
 	inspector.stop_requested.connect(stop_selected)
 	inspector.close_requested.connect(func() -> void: select_npc(""))
 	hud.add_child(inspector)
+	building_inspector = BuildingInspector.new()
+	building_inspector.name = "BuildingInspector"
+	building_inspector.setup(session.buildings, session.crates, session.inventory, registry)
+	building_inspector.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	building_inspector.offset_left = -BuildingInspector.PANEL_WIDTH - 16
+	building_inspector.offset_right = -16
+	building_inspector.offset_top = INSPECTOR_TOP
+	building_inspector.filter_changed.connect(func(_m: Array[StringName]) -> void: apply_crate_filter())
+	building_inspector.deconstruct_requested.connect(deconstruct_selected_building)
+	building_inspector.close_requested.connect(func() -> void: select_building(""))
+	hud.add_child(building_inspector)
 	toast = Label.new()
 	toast.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 	toast.offset_top = -64
@@ -140,6 +177,8 @@ func _process(delta: float) -> void:
 	if view != _last_view:
 		_last_view = view
 		world_view.update_visible(view)
+		building_view.set_visible_rect(view)
+		room_overlay.set_visible_rect(view)
 		item_view.set_visible_rect(view)
 		overlay.set_visible_rect(view)
 	autosave_left -= delta
@@ -162,6 +201,74 @@ func set_tool(t: int) -> void:
 		cancel_move()
 
 
+# --- Build menu, placement, rooms ---------------------------------------
+
+func open_build_menu() -> void:
+	build_menu.visible = not build_menu.visible
+	toolbar.set_active_tool(tools.tool)  # the Build button only shows the menu
+
+
+func close_build_menu() -> void:
+	build_menu.visible = false
+
+
+## Placement mode for a building key (build menu entry).
+func start_placement(key: StringName) -> CommandResult:
+	var r := tools.start_placement(key)
+	if r.ok:
+		cancel_move()
+		camera.left_drag_pans = false
+		toolbar.set_active_tool(ToolController.Tool.PLACE_BUILDING)
+		overlay.show_priorities = false
+		close_build_menu()
+		show_toast("Place %s: click its bottom-left tile (Esc / right-click to stop)" % session.buildings.def(key).display_name)
+	_on_command_result(r)
+	return r
+
+
+func set_rooms_visible(on: bool) -> void:
+	room_overlay.visible = on
+	toolbar.set_rooms_active(on)
+
+
+# --- Building selection -------------------------------------------------
+
+func select_building(building_id: String) -> void:
+	selected_building_id = building_id if not session.buildings.get_building(building_id).is_empty() else ""
+	building_view.selected_id = selected_building_id
+	building_inspector.show_building(selected_building_id)
+
+
+## Pushes the inspector's checkboxes to CrateStorage.set_filter. Unticking
+## every material is refused ([] would mean "accept all").
+func apply_crate_filter() -> CommandResult:
+	var any := false
+	for m in building_inspector.filter_checks:
+		any = any or (building_inspector.filter_checks[m] as CheckBox).button_pressed
+	var r: CommandResult
+	if not any:
+		r = CommandResult.failure(&"empty_filter", "A crate must accept at least one material")
+	else:
+		r = session.crates.set_filter(selected_building_id, building_inspector.checked_materials())
+	_on_command_result(r)
+	building_inspector.refresh()
+	return r
+
+
+func deconstruct_selected_building() -> CommandResult:
+	var b := session.buildings.get_building(selected_building_id)
+	var r: CommandResult
+	if b.is_empty():
+		r = CommandResult.failure(&"no_selection", "Select a building first")
+	else:
+		r = session.designations.designate(session.buildings.footprint(b["key"], b["origin"]),
+				DesignationMap.Kind.DECONSTRUCT, tools.priority)
+		if r.ok:
+			show_toast("Deconstruct ordered")
+	_on_command_result(r)
+	return r
+
+
 func set_priority(p: int) -> CommandResult:
 	var r := tools.set_priority(p)
 	if r.ok:
@@ -178,7 +285,8 @@ func click_tile(tile: Vector2i) -> CommandResult:
 		return move_selected_to(tile)
 	var n := session.colony.npc_at(tile)
 	select_npc(n.id if n != null else "")
-	return CommandResult.success({"selected": selected_npc_id})
+	select_building(session.buildings.building_at(tile) if n == null else "")
+	return CommandResult.success({"selected": selected_npc_id, "building": selected_building_id})
 
 
 func select_npc(npc_id: String) -> void:
@@ -298,11 +406,16 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		show_toast("DEV instant edit %s" % ("ON" if tools.dev_instant else "OFF") if r.ok else r.message)
 	elif k.keycode == KEY_F10 and OS.is_debug_build():
 		_on_command_result(spawn_debug_npc(tools.world_to_tile(get_global_mouse_position())))
+	elif k.keycode == KEY_R and not k.ctrl_pressed:
+		set_rooms_visible(not room_overlay.visible)
 	elif k.keycode == KEY_ESCAPE:
 		if move_pending:
 			cancel_move()
+		elif build_menu.visible:
+			close_build_menu()
 		elif tools.tool == ToolController.Tool.SELECT:
 			select_npc("")
+			select_building("")
 		else:
 			set_tool(ToolController.Tool.SELECT)
 	else:
@@ -319,8 +432,14 @@ func _update_hud() -> void:
 		tile_name = session.grid.registry.get_def(session.grid.get_tile(cursor)).display_name
 		if session.grid.is_ladder(cursor):
 			tile_name += " + ladder"
-	debug_hud.text = "%s\nFPS %d | tick %d | tick %.2f ms\nchunks drawn %d | orders %d\nNPCs %d | jobs %d\nworld hash %s\ncursor (%d, %d) %s%s" % [
+		var bid := session.buildings.building_at(cursor)
+		if not bid.is_empty():
+			tile_name += " + " + session.buildings.def(session.buildings.get_building(bid)["key"]).display_name
+	var room := RoomOverlay.describe(session.rooms.room_at(cursor))
+	debug_hud.text = "%s\nFPS %d | tick %d | tick %.2f ms\nchunks drawn %d | orders %d + %d bld\nNPCs %d | jobs %d\nbuildings %d | rooms %d\nworld hash %s\ncursor (%d, %d) %s%s%s" % [
 		session.meta.get("name", ""), Engine.get_frames_per_second(), session.clock.tick_index, last_tick_ms,
-		world_view.loaded_chunk_count(), session.designations.count(),
-		session.colony.count(), session.jobs.job_count(), _hash_cache,
-		cursor.x, cursor.y, tile_name, "\nDEV INSTANT EDIT (F9)" if tools.dev_instant else ""]
+		world_view.loaded_chunk_count(), session.designations.count(), session.build_orders.count(),
+		session.colony.count(), session.jobs.job_count(),
+		session.buildings.count(), session.rooms.room_count(), _hash_cache,
+		cursor.x, cursor.y, tile_name, "\nroom: " + room if not room.is_empty() else "",
+		"\nDEV INSTANT EDIT (F9)" if tools.dev_instant else ""]

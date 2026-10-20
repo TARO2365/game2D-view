@@ -125,7 +125,7 @@ func _draw_build_orders(font: Font) -> void:
 			continue
 		var rect := Rect2(Vector2(fp.position * tile_px), Vector2(fp.size * tile_px)).grow(-2.0)
 		draw_rect(rect, ORDER_FILL)
-		BuildingView.draw_shape(self, o["key"], rect, -1.0, GHOST_ALPHA)
+		BuildingView.draw_art(self, o["key"], rect, GHOST_ALPHA)
 		var edge := ORDER_EDGE
 		if jobs and jobs.is_unreachable(o["origin"]):
 			unreachable_drawn += 1

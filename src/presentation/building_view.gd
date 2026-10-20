@@ -4,9 +4,9 @@ extends Node2D
 ## flat shapes, obviously not final art.
 ##
 ## ART HOOK (Asset Agent, D-020): every building is drawn through
-## `_draw_building(key, rect, fill)`. Put a Texture2D into `textures[key]`
-## (or override `texture_for`) and it is drawn stretched over the footprint
-## instead of the placeholder shape. The static `draw_shape` is also used for
+## `_draw_building(key, rect, fill)`, which asks `texture_for(key)`:
+## `textures[key]` if set, else ArtLibrary `buildings/building_<key>.png`.
+## A texture is drawn over the footprint instead of the placeholder shape. The static `draw_shape` is also used for
 ## build-menu icons and order ghosts.
 
 const OUTLINE := Color(0.08, 0.06, 0.05)
@@ -91,8 +91,22 @@ func _draw_building(key: StringName, rect: Rect2, fill: float = -1.0) -> void:
 	draw_shape(self, key, rect, fill)
 
 
+## Override in `textures`, else production art buildings/building_<key>.png
+## (ASSET_SPEC §7), else null (placeholder shape).
 func texture_for(key: StringName) -> Texture2D:
-	return textures.get(key) as Texture2D
+	if textures.has(key):
+		return textures[key] as Texture2D
+	return ArtLibrary.texture(ArtLibrary.building_path(key))
+
+
+## Building art (production texture or placeholder shape) on any CanvasItem:
+## used for order ghosts, the placement preview and build-menu icons.
+static func draw_art(ci: CanvasItem, key: StringName, rect: Rect2, alpha: float = 1.0) -> void:
+	var tex := ArtLibrary.texture(ArtLibrary.building_path(key))
+	if tex != null:
+		ci.draw_texture_rect(tex, rect, false, Color(1, 1, 1, alpha))
+	else:
+		draw_shape(ci, key, rect, -1.0, alpha)
 
 
 ## Placeholder shape of a building key inside rect (any CanvasItem). alpha
