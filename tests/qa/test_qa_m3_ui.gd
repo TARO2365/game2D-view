@@ -84,9 +84,6 @@ func test_preview_matches_order_building_randomized() -> void:
 ## ok=true while order_building fails with overlaps_designation
 ## (ToolController.update_preview recomputes only when the origin changes).
 func test_preview_refreshes_when_world_changes_under_pointer() -> void:
-	pending("BUG M3-QA-5: placement preview stays green after the world changes under a motionless pointer")
-	return
-	@warning_ignore("unreachable_code")
 	var g := session.grid
 	var mid := g.width / 2
 	var o := Vector2i(-1, -1)
