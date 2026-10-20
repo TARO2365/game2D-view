@@ -1,0 +1,56 @@
+[gd_resource type="Resource" script_class="BuildingRegistry" format=3]
+
+[ext_resource type="Script" path="res://src/world/building_registry.gd" id="1_reg"]
+[ext_resource type="Script" path="res://src/world/building_def.gd" id="2_def"]
+
+; All kg / work_ticks / storage_kg values are PLACEHOLDER (M3 contract §2, D-021).
+; Keys are saved: never rename.
+
+[sub_resource type="Resource" id="Bld_door"]
+script = ExtResource("2_def")
+key = &"door"
+display_name = "Door"
+size = Vector2i(1, 3)
+materials = Array[StringName]([&"rock"])
+kg = 50.0
+work_ticks = 30
+needs_floor = true
+is_door = true
+
+[sub_resource type="Resource" id="Bld_crate"]
+script = ExtResource("2_def")
+key = &"crate"
+display_name = "Storage Crate"
+size = Vector2i(1, 1)
+materials = Array[StringName]([&"rock", &"dirt"])
+kg = 50.0
+work_ticks = 20
+needs_floor = true
+storage_kg = 2000.0
+room_tag = &"storage"
+
+[sub_resource type="Resource" id="Bld_bed"]
+script = ExtResource("2_def")
+key = &"bed"
+display_name = "Bed"
+size = Vector2i(2, 1)
+materials = Array[StringName]([&"rock", &"dirt"])
+kg = 50.0
+work_ticks = 30
+needs_floor = true
+room_tag = &"bedroom"
+
+[sub_resource type="Resource" id="Bld_table"]
+script = ExtResource("2_def")
+key = &"table"
+display_name = "Table"
+size = Vector2i(2, 1)
+materials = Array[StringName]([&"rock"])
+kg = 50.0
+work_ticks = 30
+needs_floor = true
+room_tag = &"dining"
+
+[resource]
+script = ExtResource("1_reg")
+defs = Array[Resource]([SubResource("Bld_door"), SubResource("Bld_crate"), SubResource("Bld_bed"), SubResource("Bld_table")])
