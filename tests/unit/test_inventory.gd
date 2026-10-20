@@ -1,5 +1,21 @@
 extends GutTest
 
+
+func test_relocate_ground_keeps_id_and_mass() -> void:
+	var inv2 := Inventory.new(StableIdAllocator.new())
+	var id := inv2.spawn_ground(&"dirt", 50.0, Vector2i(3, 4))
+	watch_signals(inv2)
+	var r := inv2.relocate_ground(id, Vector2i(3, 9))
+	assert_true(r.ok)
+	assert_true(r.data["moved"])
+	assert_eq(inv2.get_item(id).tile, Vector2i(3, 9))
+	assert_eq(inv2.items_at(Vector2i(3, 4)).size(), 0)
+	assert_signal_emitted(inv2, "items_changed")
+	assert_eq(inv2.check_conservation(), [] as Array[String])
+	inv2.pick_up(id, "npc:1")
+	assert_eq(inv2.relocate_ground(id, Vector2i.ZERO).code, &"not_on_ground")
+	assert_eq(inv2.relocate_ground("item:99", Vector2i.ZERO).code, &"unknown_item")
+
 var ids: StableIdAllocator
 var inv: Inventory
 

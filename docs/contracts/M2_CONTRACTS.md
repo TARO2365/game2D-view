@@ -88,6 +88,10 @@ Inventory does **not** know reservations (JobManager owns them) and never merges
 Capacity bookings are **stored** in StockpileZones but their **lifecycle** belongs to JobManager; removing a zone
 tile or a terrain change silently drops its booking — JobManager must check `booked_tile(job_id)` before dropping.
 `pick_up` result data: `item_id`, `kg`, `split`, `source_id`. `spawn_ground` returns `""` on invalid input.
+**Added by Lead (M2 fix round):** `relocate_ground(item_id, tile) -> CommandResult` — ground → ground, same id
+(item gravity). JobManager owns the gravity rule: after `tiles_changed`, ground items whose tile below is no longer
+solid fall to the first tile with a solid tile directly below (never into a structure-less void forever: stop at the
+world bottom).
 
 ## 4. Stockpiles (Systems Agent) — `src/inventory/stockpile_zones.gd`
 ```gdscript

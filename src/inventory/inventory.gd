@@ -187,6 +187,21 @@ func drop(npc_id: String, tile: Vector2i) -> CommandResult:
 	return CommandResult.success({"item_id": it.id, "kg": it.kg})
 
 
+## Ground -> another ground tile, keeping the same id (items falling after
+## the floor under them was dug). Reservations on the id stay valid.
+func relocate_ground(item_id: String, tile: Vector2i) -> CommandResult:
+	var it := get_item(item_id)
+	if it == null:
+		return CommandResult.failure(&"unknown_item", "No item %s" % item_id)
+	if it.holder != Holder.GROUND:
+		return CommandResult.failure(&"not_on_ground", "%s is not on the ground" % item_id)
+	if it.tile == tile:
+		return CommandResult.success({"item_id": it.id, "moved": false})
+	it.tile = tile
+	items_changed.emit(it.id)
+	return CommandResult.success({"item_id": it.id, "moved": true})
+
+
 ## NPC hands -> construction site of job_id.
 func deliver_to_site(npc_id: String, job_id: String) -> CommandResult:
 	if job_id.is_empty():
