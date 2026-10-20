@@ -62,9 +62,6 @@ func test_buildings_and_wall_refund_exactly_per_material() -> void:
 ## BUG M3-QA-1: confirmed failing without pending() on 2026-10-20: rock 75 / dirt 25
 ## after deconstruct (JobManager.LADDER_REFUND_MATERIAL = dirt).
 func test_ladder_built_from_rock_refunds_rock() -> void:
-	pending("BUG M3-QA-1: deconstructing a ladder always refunds dirt, even if it was built from rock")
-	return
-	@warning_ignore("unreachable_code")
 	var s: WorldSession = e.ses
 	s.colony.spawn_npc(Vector2i(5, 9))
 	s.inventory.spawn_ground(&"rock", 100.0, Vector2i(2, 9))
@@ -220,9 +217,6 @@ func test_door_loses_top_support_by_deconstruct() -> void:
 ## keeps _by_tile[447] -> "job:1" after the job is deleted (_unmap_decon_tile
 ## erases _job_tiles before _cancel, so _delete_job misses the second tile).
 func test_cancel_whole_building_deconstruct_leaves_no_stale_index() -> void:
-	pending("BUG M3-QA-2: stale tile-index entry after a multi-tile deconstruct job is cancelled")
-	return
-	@warning_ignore("unreachable_code")
 	var s: WorldSession = e.ses
 	s.buildings.place(&"bed", Vector2i(14, 9), {&"dirt": 50.0})
 	assert_true(s.designations.designate(Rect2i(14, 9, 2, 1), K.DECONSTRUCT).ok)
@@ -236,9 +230,6 @@ func test_cancel_whole_building_deconstruct_leaves_no_stale_index() -> void:
 ## failing without pending() on 2026-10-20); the rest is checked with the
 ## stale-index check relaxed in test_building_lost_while_deconstructed_relaxed.
 func test_building_lost_while_being_deconstructed() -> void:
-	pending("BUG M3-QA-2: stale tile-index entry when a building being deconstructed is lost")
-	return
-	@warning_ignore("unreachable_code")
 	_lost_while_deconstructed()
 
 
