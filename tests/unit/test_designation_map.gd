@@ -68,6 +68,37 @@ func test_terrain_change_removes_stale_orders() -> void:
 	assert_eq(d.count(), 2)
 
 
+func test_priorities() -> void:
+	assert_true(d.designate(Rect2i(0, 20, 2, 1), DesignationMap.Kind.DIG, 8).ok)
+	assert_eq(d.get_priority(Vector2i(0, 20)), 8)
+	assert_eq(d.designate(Rect2i(0, 30, 1, 1), DesignationMap.Kind.DIG, 0).code, &"invalid_priority")
+	assert_eq(d.designate(Rect2i(0, 30, 1, 1), DesignationMap.Kind.DIG, 10).code, &"invalid_priority")
+	var r := d.set_priority(Rect2i(0, 20, 5, 5), 2)
+	assert_true(r.ok)
+	assert_eq(r.data["changed"], 2)
+	assert_eq(d.get_priority(Vector2i(1, 20)), 2)
+	assert_eq(d.set_priority(Rect2i(40, 40, 2, 2), 3).code, &"nothing_to_change")
+
+
+func test_ladder_orders_and_structures() -> void:
+	assert_true(d.designate(Rect2i(3, 0, 1, 5), DesignationMap.Kind.BUILD_LADDER).ok)
+	assert_eq(d.count(), 5)
+	assert_eq(d.designate(Rect2i(3, 20, 1, 2), DesignationMap.Kind.BUILD_LADDER).code, &"nothing_to_designate")
+	# A finished ladder removes its order; walls cannot be ordered onto it.
+	g.apply_structure(Vector2i(3, 2), WorldGrid.Structure.LADDER)
+	assert_eq(d.get_kind(Vector2i(3, 2)), DesignationMap.Kind.NONE)
+	assert_eq(d.designate(Rect2i(3, 2, 1, 1), DesignationMap.Kind.BUILD_WALL).code, &"nothing_to_designate")
+	# A different build order on the same tile replaces the old one.
+	assert_true(d.designate(Rect2i(3, 0, 1, 1), DesignationMap.Kind.BUILD_WALL).ok)
+	assert_eq(d.get_kind(Vector2i(3, 0)), DesignationMap.Kind.BUILD_WALL)
+
+
+func test_v1_snapshot_without_priorities() -> void:
+	var v1 := {"indices": PackedInt32Array([20 * 64]), "kinds": PackedByteArray([DesignationMap.Kind.DIG])}
+	assert_eq(d.load_snapshot(v1), 0)
+	assert_eq(d.get_priority(Vector2i(0, 20)), DesignationMap.DEFAULT_PRIORITY)
+
+
 func test_snapshot_round_trip_and_sanitising() -> void:
 	d.designate(Rect2i(5, 20, 3, 2), DesignationMap.Kind.DIG)
 	d.designate(Rect2i(5, 0, 2, 2), DesignationMap.Kind.BUILD_WALL)
