@@ -16,6 +16,7 @@ var stockpiles: StockpileZones
 var buildings: Buildings
 var rooms: RoomMap
 var crates: CrateStorage
+var build_orders: BuildOrders
 var nav: NavGrid
 var jobs: JobManager
 var colony: Colony
@@ -43,9 +44,11 @@ static func from_grid(world_meta: Dictionary, world_grid: WorldGrid) -> WorldSes
 	s.stockpiles = StockpileZones.new(s.grid, s.inventory)
 	s.rooms = RoomMap.new(s.grid, s.buildings)
 	s.crates = CrateStorage.new(s.buildings, s.inventory)
+	s.build_orders = BuildOrders.new(s.grid, s.buildings, s.designations, s.ids)
 	var config := load(SCALE_CONFIG_PATH) as ScaleConfig
 	s.nav = NavGrid.new(s.grid, config.clearance_standard_tiles)
-	s.jobs = JobManager.new(s.grid, s.designations, s.inventory, s.stockpiles, s.nav, s.ids)
+	s.jobs = JobManager.new(s.grid, s.designations, s.inventory, s.stockpiles, s.nav, s.ids,
+			s.buildings, s.crates, s.build_orders)
 	s.colony = Colony.new(s.grid, s.nav, s.jobs, s.ids, int(world_meta.get("seed", 0)))
 	s.clock.ticked.connect(s.simulate_tick)
 	return s

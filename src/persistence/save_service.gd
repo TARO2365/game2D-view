@@ -49,6 +49,7 @@ static func build_payload(session: WorldSession) -> Dictionary:
 		"designations": session.designations.to_snapshot(),
 		"buildings": session.buildings.to_snapshot(),
 		"crates": session.crates.to_snapshot(),
+		"build_orders": session.build_orders.to_snapshot(),
 		"inventory": session.inventory.to_snapshot(),
 		"stockpiles": session.stockpiles.to_snapshot(),
 		"colony": session.colony.to_snapshot(),
@@ -174,6 +175,7 @@ static func session_from_payload(p: Dictionary, meta: Dictionary, registry: Tile
 	dropped["stockpiles"] = s.stockpiles.load_snapshot(p.get("stockpiles", {})) if version >= 2 else 0
 	dropped["crates"] = s.crates.load_snapshot(p.get("crates", {})) if version >= 3 else 0
 	dropped["orphan_crate_items"] = _rescue_orphan_crate_items(s)
+	dropped["build_orders"] = s.build_orders.load_snapshot(p.get("build_orders", {})) if version >= 3 else 0
 	dropped["colony"] = s.colony.load_snapshot(p.get("colony", {})) if version >= 2 else 0
 	if version == 1:
 		s.colony.spawn_starting_npcs()  # M1 worlds had no NPCs

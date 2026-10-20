@@ -88,6 +88,8 @@ func test_v3_round_trip_buildings_crates_rooms() -> void:
 	var item := s.inventory.spawn_ground(&"dirt", 40.0, Vector2i(x, floor_y))
 	s.inventory.pick_up(item, "npc:1")
 	assert_true(s.inventory.store_in_crate("npc:1", crate_id).ok)
+	var bed_order := s.build_orders.order_building(&"bed", Vector2i(x + 4, floor_y), 7)
+	assert_true(bed_order.ok, str(bed_order))
 	assert_true(SaveService.save(s, dir, SaveService.Kind.MANUAL).ok)
 	var r := _load(s)
 	assert_true(r.ok, str(r))
@@ -100,6 +102,8 @@ func test_v3_round_trip_buildings_crates_rooms() -> void:
 	assert_eq(l.inventory.crate_kg(crate_id), 40.0)
 	assert_eq(l.grid.world_hash(), s.grid.world_hash())
 	assert_eq(l.rooms.room_count(), s.rooms.room_count(), "rooms rebuilt on load")
+	assert_eq(l.build_orders.orders(), s.build_orders.orders(), "building orders survive")
+	assert_eq(l.jobs.check_invariants(), [] as Array[String])
 
 
 func test_orphan_crate_items_are_rescued() -> void:
