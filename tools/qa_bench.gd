@@ -6,7 +6,10 @@ extends SceneTree
 ##     how long the reachable order waits (starvation).
 ##  B. Item-heavy colony: 100 NPCs, 2000 loose stacks, 100 ladder orders,
 ##     a 200-tile stockpile (stresses material search / capacity scans).
-## Usage: godot --headless --path . -s res://tools/qa_bench.gd -- [ticks]
+##  C. M3 base (full WorldSession): 100 NPCs, 30 door-closed rooms with 2 crates
+##     and a bed each (60 crates), 2000 loose stacks hauled into the crates,
+##     10 furniture orders; plus the cost of room updates for 200 digs inside rooms.
+## Usage: godot --headless --path . -s res://tools/qa_bench.gd -- [ticks] [only_c]
 
 const K := DesignationMap.Kind
 
@@ -14,12 +17,114 @@ const K := DesignationMap.Kind
 func _init() -> void:
 	var args := OS.get_cmdline_user_args()
 	var ticks := int(args[0]) if args.size() > 0 else 600
+	var only_c := args.size() > 1 and args[1] == "only_c"
 	var reg := TileRegistry.load_default()
-	for npcs in [3, 100]:
-		_bench_unreachable(reg, npcs, ticks, true)
-		_bench_unreachable(reg, npcs, ticks, false)
-	_bench_items(reg, ticks)
+	if not only_c:
+		for npcs in [3, 100]:
+			_bench_unreachable(reg, npcs, ticks, true)
+			_bench_unreachable(reg, npcs, ticks, false)
+		_bench_items(reg, ticks)
+	_bench_m3_base(reg, ticks, true)
+	_bench_m3_base(reg, ticks, false)
 	quit()
+
+
+func _bench_m3_base(reg: TileRegistry, ticks: int, with_crates: bool = true) -> void:
+	var size: Vector2i = WorldGenerator.PRESETS[&"medium"]
+	var s := WorldSession.create_new({"id": "bench", "name": "Bench", "seed": 12345, "preset": "medium",
+			"size": size, "gen_version": WorldGenerator.GEN_VERSION}, reg)
+	var g := s.grid
+	var rooms_made := 0
+	var x := 30
+	while rooms_made < 30 and x < size.x - 30:
+		# shaft (x) with ladders, door gap (x+1), pocket x+2..x+7, 3 tall
+		var top: int = maxi(g.surface_y[x], g.surface_y[x + 8]) + 5
+		g.apply_edit(Rect2i(x, g.surface_y[x], 1, top + 3 - g.surface_y[x]), WorldGrid.Edit.DIG)
+		for y in range(g.surface_y[x], top + 3):
+			g.apply_structure(Vector2i(x, y), WorldGrid.Structure.LADDER)
+		g.apply_edit(Rect2i(x + 1, top, 7, 3), WorldGrid.Edit.DIG)
+		var ok := s.buildings.place(&"door", Vector2i(x + 1, top + 2), {&"rock": 50.0}).ok
+		if with_crates:
+			ok = s.buildings.place(&"crate", Vector2i(x + 3, top + 2), {&"rock": 50.0}).ok and ok
+			ok = s.buildings.place(&"crate", Vector2i(x + 4, top + 2), {&"rock": 50.0}).ok and ok
+		else:
+			s.stockpiles.designate(Rect2i(x + 3, top + 2, 2, 1))  # same 2 tiles as zone
+		ok = s.buildings.place(&"bed", Vector2i(x + 6, top + 2), {&"dirt": 50.0}).ok and ok
+		if ok:
+			rooms_made += 1
+		x += 15
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 9
+	var placed := 0
+	while placed < 2000:
+		var px := rng.randi_range(10, size.x - 11)
+		var t := Vector2i(px, g.surface_y[px] - 1)
+		if s.nav.can_stand(t):
+			s.inventory.spawn_ground(&"dirt" if rng.randf() < 0.6 else &"rock", rng.randf_range(10.0, 150.0), t)
+			placed += 1
+	var furn := 0
+	var fx := 20
+	while furn < 10 and fx < size.x - 20:
+		if s.build_orders.order_building(&"table", Vector2i(fx, g.surface_y[fx] - 1)).ok:
+			furn += 1
+		fx += 37
+	var step := maxi(1, (size.x - 20) / 97)
+	var sx := 10
+	while s.colony.count() < 100 and sx < size.x - 10:
+		var t := Vector2i(sx, g.surface_y[sx] - 1)
+		if s.nav.can_stand(t):
+			s.colony.spawn_npc(t)
+		sx += step
+	# Micro costs of the crate queries the job code calls in loops.
+	var cids := s.crates.crate_ids()
+	if not cids.is_empty():
+		var c0 := Time.get_ticks_usec()
+		for i in 100:
+			s.crates.crate_ids()
+		var c1 := Time.get_ticks_usec()
+		for i in 100:
+			s.crates.free_capacity(cids[i % cids.size()])
+		var c2 := Time.get_ticks_usec()
+		for i in 100:
+			s.crates.find_crate(&"dirt", 50.0, Vector2i(size.x / 2, 30))
+		var c3 := Time.get_ticks_usec()
+		print("C micro: crate_ids() %.3f ms, free_capacity() %.3f ms, find_crate() %.3f ms (per call, %d items, %d crates)" % [
+				(c1 - c0) / 100000.0, (c2 - c1) / 100000.0, (c3 - c2) / 100000.0, s.inventory.all_items().size(), cids.size()])
+	else:
+		print("C variant: no crates, the same 60 tiles are stockpile zone tiles")
+	var total := 0
+	var mx := 0
+	var jobs_us := 0
+	for tick in range(1, ticks + 1):
+		s.clock.tick_index = tick
+		var t0 := Time.get_ticks_usec()
+		s.jobs.update(tick)
+		var t1 := Time.get_ticks_usec()
+		s.colony.update(tick)
+		var us := Time.get_ticks_usec() - t0
+		jobs_us += t1 - t0
+		total += us
+		mx = maxi(mx, us)
+	var in_crates := 0.0
+	for cid in s.crates.crate_ids():
+		in_crates += s.inventory.crate_kg(cid)
+	var errs := s.jobs.check_invariants()
+	errs.append_array(s.inventory.check_conservation())
+	# Room update cost: 200 single-tile digs inside room walls (each re-floods).
+	var t1 := Time.get_ticks_usec()
+	var digs := 0
+	for r in s.rooms.all_rooms():
+		var bd: Rect2i = r["bounds"]
+		for i in 7:
+			if s.grid.apply_edit(Rect2i(bd.end.x + (i % 2), bd.position.y + i % 3, 1, 1), WorldGrid.Edit.DIG).ok:
+				digs += 1
+	var room_us := Time.get_ticks_usec() - t1
+	print("C m3 base     npcs %d  rooms %d (made %d)  crates %d  buildings %d  2000 stacks, %d table orders: avg %.3f ms/tick (jobs.update %.3f)  max %.2f ms  in crates %.0f kg  tables built %d  invariants %s" % [
+			s.colony.count(), s.rooms.room_count(), rooms_made, s.crates.crate_ids().size(), s.buildings.count(), furn,
+			total / 1000.0 / ticks, jobs_us / 1000.0 / ticks, mx / 1000.0, in_crates, furn - s.build_orders.count(),
+			"OK" if errs.is_empty() else str(errs.slice(0, 3))])
+	print("C room updates: %d digs next to rooms took %.2f ms total (%.3f ms each)" % [digs, room_us / 1000.0,
+			room_us / 1000.0 / maxi(1, digs)])
 
 
 func _make(reg: TileRegistry) -> Dictionary:
