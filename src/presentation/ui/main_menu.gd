@@ -44,7 +44,7 @@ func _ready() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	var sub := Label.new()
-	sub.text = "M2 build — placeholder art"
+	sub.text = "M3 build — placeholder art"
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(sub)
 	var hdr := Label.new()

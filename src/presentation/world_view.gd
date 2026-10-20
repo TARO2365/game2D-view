@@ -25,15 +25,58 @@ func setup(world_grid: WorldGrid, px: int) -> void:
 
 
 func _ready() -> void:
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED  # backwall strip tiles
 	_tileset = PlaceholderTiles.build_tileset(grid.registry, tile_px)
 	grid.tiles_changed.connect(_on_tiles_changed)
 	queue_redraw()
 
 
+## Production art (ASSET_SPEC §5.2/5.3) when present; flat colours otherwise.
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, Vector2(grid.get_size() * tile_px)), BACKWALL_COLOR)
+	var world := Rect2(Vector2.ZERO, Vector2(grid.get_size() * tile_px))
+	var wall := backwall_texture()
+	if wall != null:
+		# 256x64 strip of 4 variants, repeated; scaled so one cell = one tile.
+		var s := float(tile_px) / float(wall.get_height())
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE * s)
+		draw_texture_rect(wall, Rect2(Vector2.ZERO, world.size / s), true)
+		draw_set_transform(Vector2.ZERO)
+	else:
+		draw_rect(world, BACKWALL_COLOR)
 	for x in grid.width:
 		draw_rect(Rect2(x * tile_px, 0, tile_px, grid.surface_y[x] * tile_px), SKY_COLOR)
+	var sky := sky_texture()
+	if sky != null:
+		_draw_sky(sky)
+
+
+func backwall_texture() -> Texture2D:
+	return ArtLibrary.texture(ArtLibrary.background_path(&"backwall_dug"))
+
+
+func sky_texture() -> Texture2D:
+	return ArtLibrary.texture(ArtLibrary.background_path(&"sky_surface"))
+
+
+## Sky image at native size, repeated horizontally, its bottom edge on the
+## deepest surface row; each column is clipped at its own surface line. Above
+## the image the flat SKY_COLOR stays visible.
+func _draw_sky(sky: Texture2D) -> void:
+	var size := sky.get_size()
+	var bottom := 0
+	for x in grid.width:
+		bottom = maxi(bottom, grid.surface_y[x])
+	var band_bottom := float(bottom * tile_px)
+	var band_top := band_bottom - size.y
+	for x in grid.width:
+		var x0 := float(x * tile_px)
+		var y0 := maxf(band_top, 0.0)
+		var y1 := float(grid.surface_y[x] * tile_px)
+		if y1 <= y0:
+			continue
+		var sx := fposmod(x0, size.x)
+		var w := minf(float(tile_px), size.x - sx)
+		draw_texture_rect_region(sky, Rect2(x0, y0, w, y1 - y0), Rect2(sx, y0 - band_top, w, y1 - y0))
 
 
 func loaded_chunk_count() -> int:
@@ -71,6 +114,7 @@ func _load_chunk(c: Vector2i) -> void:
 	if _pool.is_empty():
 		layer = TileMapLayer.new()
 		layer.tile_set = _tileset
+		layer.texture_repeat = CanvasItem.TEXTURE_REPEAT_DISABLED  # not inherited from the backwall
 		add_child(layer)
 	else:
 		layer = _pool.pop_back()
