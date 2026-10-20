@@ -27,6 +27,8 @@ Status values: **APPROVED** (owner said yes), **DELEGATED** (owner asked Lead to
 | D-020 | 2026-10-20 | Art path **B then A**: Claude first draws improved, readable code-generated art (B); then owner-generated AI images replace it (A). A dedicated **Asset Agent** writes the asset spec and **image-generation prompts** for the owner, then slices/cleans/imports the images the owner returns. The owner runs the image AI; agents only deliver prompts. | APPROVED | Owner |
 | D-021 | 2026-10-20 | M3 plan approved in full (P-1…P-5): buildings door/crate/bed/table; room ≤ 128 tiles; deconstruction refunds 100 % for basic buildings; haulers prefer crates; Visual track V1 runs in parallel. | APPROVED | Owner |
 | D-022 | 2026-10-20 | M3 module contracts per `docs/contracts/M3_CONTRACTS.md`. | DELEGATED | Lead |
+| D-023 | 2026-10-20 | Door placement: a door fills a 1-wide, 3-tall gap — solid tile above its top and floor below; **no** side-wall requirement (side view: the door connects the corridor left and right). Lead's brief was wrong; World Agent's interpretation adopted. Open sky = any tile with y < `surface_y[x]`. | DELEGATED | M3 World review |
+| D-024 | 2026-10-20 | `CrateStorage` keeps a duck-typed buildings provider (tests use a fake); contract otherwise unchanged. Save v3 load order: **buildings before designations**, then inventory, stockpiles, crates, orphan-crate rescue, colony, jobs; rooms rebuilt last. | DELEGATED | Lead |
 
 ## Rationale notes
 - **D-003 clearance 3:** concept sheet shows NPC ≈ 2.5 tiles and ordinary zombie ≈ 3 tiles. A 2-tile corridor

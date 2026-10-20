@@ -9,10 +9,11 @@ extends RefCounted
 
 enum Kind { MANUAL, AUTO }
 
-## v2 (M2): chunk bytes hold tiles + structures; adds inventory and
-## stockpiles. v1 (M1) saves are migrated on load (see session_from_payload).
-const SAVE_VERSION := 2
-const SUPPORTED_VERSIONS := [1, 2]
+## v2 (M2): chunk bytes hold tiles + structures; adds inventory, stockpiles,
+## colony, jobs. v3 (M3): adds buildings and crates (rooms are rebuilt, not
+## saved). Older saves are migrated on load (see session_from_payload).
+const SAVE_VERSION := 3
+const SUPPORTED_VERSIONS := [1, 2, 3]
 const MAGIC := "LAST_BUNKER_SAVE"
 const FILE_NAMES := {Kind.MANUAL: "manual.save", Kind.AUTO: "autosave.save"}
 const BAK_SUFFIX := ".bak"
@@ -46,6 +47,8 @@ static func build_payload(session: WorldSession) -> Dictionary:
 		"ids": session.ids.to_snapshot(),
 		"chunks": chunks,
 		"designations": session.designations.to_snapshot(),
+		"buildings": session.buildings.to_snapshot(),
+		"crates": session.crates.to_snapshot(),
 		"inventory": session.inventory.to_snapshot(),
 		"stockpiles": session.stockpiles.to_snapshot(),
 		"colony": session.colony.to_snapshot(),
@@ -162,16 +165,41 @@ static func session_from_payload(p: Dictionary, meta: Dictionary, registry: Tile
 	s.ids.load_snapshot(p.get("ids", {}))
 	# Load order matters (contract §7): orders, items, zones, colony, then jobs,
 	# which re-validates every reservation against the others.
-	var dropped := {
-		"designations": s.designations.load_snapshot(p.get("designations", {})),
-		"inventory": s.inventory.load_snapshot(p.get("inventory", {})) if version >= 2 else 0,
-		"stockpiles": s.stockpiles.load_snapshot(p.get("stockpiles", {})) if version >= 2 else 0,
-		"colony": s.colony.load_snapshot(p.get("colony", {})) if version >= 2 else 0,
-	}
+	# Buildings load before designations (deconstruct orders on buildings are
+	# validated against them) and before crates (crate filters need the crates).
+	var dropped := {}
+	dropped["buildings"] = s.buildings.load_snapshot(p.get("buildings", {})) if version >= 3 else 0
+	dropped["designations"] = s.designations.load_snapshot(p.get("designations", {}))
+	dropped["inventory"] = s.inventory.load_snapshot(p.get("inventory", {})) if version >= 2 else 0
+	dropped["stockpiles"] = s.stockpiles.load_snapshot(p.get("stockpiles", {})) if version >= 2 else 0
+	dropped["crates"] = s.crates.load_snapshot(p.get("crates", {})) if version >= 3 else 0
+	dropped["orphan_crate_items"] = _rescue_orphan_crate_items(s)
+	dropped["colony"] = s.colony.load_snapshot(p.get("colony", {})) if version >= 2 else 0
 	if version == 1:
 		s.colony.spawn_starting_npcs()  # M1 worlds had no NPCs
 	dropped["jobs"] = s.jobs.load_snapshot(p.get("jobs", {}) if version >= 2 else {})
+	s.rooms.rebuild_all()
 	return CommandResult.success({"session": s, "dropped": dropped, "migrated_from": version})
+
+
+## Items whose crate no longer exists (corrupt/edited save) would be stuck
+## forever: put them on the ground at the surface in the world centre and
+## report how many stacks were moved (> 0 means the save was inconsistent).
+static func _rescue_orphan_crate_items(s: WorldSession) -> int:
+	var crate_ids := s.crates.crate_ids()
+	var orphans := {}
+	for it in s.inventory.all_items():
+		if it.holder == Inventory.Holder.CRATE and it.holder_id not in crate_ids:
+			orphans[it.holder_id] = true
+	if orphans.is_empty():
+		return 0
+	var x := s.grid.width / 2
+	var tile := Vector2i(x, s.grid.surface_y[x] - 1)
+	var moved := 0
+	for bid in orphans:
+		moved += s.inventory.crate_items(bid).size()
+		s.inventory.empty_crate_to_ground(bid, tile)
+	return moved
 
 
 static func _read_candidates(dir: String, suffix: String, errors: Array[String]) -> Array:

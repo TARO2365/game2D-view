@@ -93,6 +93,31 @@ func test_ladder_orders_and_structures() -> void:
 	assert_eq(d.get_kind(Vector2i(3, 0)), DesignationMap.Kind.BUILD_WALL)
 
 
+func test_deconstruct_orders_only_on_player_built_things() -> void:
+	var b := Buildings.new(g, StableIdAllocator.new())
+	assert_eq(d.designate(Rect2i(0, 20, 3, 3), DesignationMap.Kind.DECONSTRUCT).code, &"nothing_to_designate", "natural dirt")
+	g.apply_edit(Rect2i(10, 9, 1, 1), WorldGrid.Edit.BUILD_WALL)
+	g.apply_structure(Vector2i(12, 9), WorldGrid.Structure.LADDER)
+	assert_true(b.place(&"crate", Vector2i(14, 9), {}).ok)
+	var r := d.designate(Rect2i(10, 9, 5, 1), DesignationMap.Kind.DECONSTRUCT)
+	assert_true(r.ok, str(r))
+	assert_eq(r.data["added"], 3, "wall + ladder + crate")
+	# Removing the thing makes the order stale.
+	g.apply_edit(Rect2i(10, 9, 1, 1), WorldGrid.Edit.DECONSTRUCT_WALL)
+	assert_eq(d.get_kind(Vector2i(10, 9)), DesignationMap.Kind.NONE)
+
+
+func test_wall_and_ladder_orders_refuse_building_tiles() -> void:
+	var b := Buildings.new(g, StableIdAllocator.new())
+	assert_true(b.place(&"bed", Vector2i(20, 9), {}).ok)
+	assert_eq(d.designate(Rect2i(20, 9, 2, 1), DesignationMap.Kind.BUILD_WALL).code, &"nothing_to_designate")
+	assert_eq(d.designate(Rect2i(20, 9, 2, 1), DesignationMap.Kind.BUILD_LADDER).code, &"nothing_to_designate")
+	# An order placed before the furniture becomes stale when the bed is built there.
+	assert_true(d.designate(Rect2i(30, 9, 1, 1), DesignationMap.Kind.BUILD_LADDER).ok)
+	assert_true(b.place(&"bed", Vector2i(29, 9), {}).ok)
+	assert_eq(d.get_kind(Vector2i(30, 9)), DesignationMap.Kind.NONE)
+
+
 func test_v1_snapshot_without_priorities() -> void:
 	var v1 := {"indices": PackedInt32Array([20 * 64]), "kinds": PackedByteArray([DesignationMap.Kind.DIG])}
 	assert_eq(d.load_snapshot(v1), 0)

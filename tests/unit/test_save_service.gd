@@ -65,8 +65,9 @@ func test_v2_round_trip_with_ladders_items_and_stockpiles() -> void:
 	var r := _load(s)
 	assert_true(r.ok, str(r))
 	var l: WorldSession = r.data["session"]
-	assert_eq(r.data["migrated_from"], 2)
-	assert_eq(r.data["dropped"], {"designations": 0, "inventory": 0, "stockpiles": 0, "colony": 0, "jobs": 0})
+	assert_eq(r.data["migrated_from"], SaveService.SAVE_VERSION)
+	for k in r.data["dropped"]:
+		assert_eq(r.data["dropped"][k], 0, "dropped %s" % k)
 	assert_eq(l.colony.count(), s.colony.count())
 	assert_true(l.grid.is_ladder(air))
 	assert_eq(l.grid.world_hash(), s.grid.world_hash())
@@ -75,6 +76,44 @@ func test_v2_round_trip_with_ladders_items_and_stockpiles() -> void:
 	assert_eq(l.jobs.check_invariants(), [] as Array[String])
 	assert_eq(l.stockpiles.count(), 1)
 	assert_eq(l.ids.peek_next(&"item"), s.ids.peek_next(&"item"), "item ids continue, never reused")
+
+
+func test_v3_round_trip_buildings_crates_rooms() -> void:
+	var s := _session()
+	var x := 40
+	var floor_y := s.grid.surface_y[x] - 1
+	assert_true(s.buildings.place(&"crate", Vector2i(x, floor_y), {&"rock": 50.0}).ok)
+	var crate_id := s.buildings.building_at(Vector2i(x, floor_y))
+	assert_true(s.crates.set_filter(crate_id, [&"dirt"] as Array[StringName]).ok)
+	var item := s.inventory.spawn_ground(&"dirt", 40.0, Vector2i(x, floor_y))
+	s.inventory.pick_up(item, "npc:1")
+	assert_true(s.inventory.store_in_crate("npc:1", crate_id).ok)
+	assert_true(SaveService.save(s, dir, SaveService.Kind.MANUAL).ok)
+	var r := _load(s)
+	assert_true(r.ok, str(r))
+	assert_eq(r.data["migrated_from"], 3)
+	for k in r.data["dropped"]:
+		assert_eq(r.data["dropped"][k], 0, "dropped %s" % k)
+	var l: WorldSession = r.data["session"]
+	assert_eq(l.buildings.get_building(crate_id)["key"], &"crate")
+	assert_eq(l.crates.get_filter(crate_id), [&"dirt"] as Array[StringName])
+	assert_eq(l.inventory.crate_kg(crate_id), 40.0)
+	assert_eq(l.grid.world_hash(), s.grid.world_hash())
+	assert_eq(l.rooms.room_count(), s.rooms.room_count(), "rooms rebuilt on load")
+
+
+func test_orphan_crate_items_are_rescued() -> void:
+	var s := _session()
+	var item := s.inventory.spawn_ground(&"rock", 30.0, Vector2i(5, 5))
+	s.inventory.pick_up(item, "npc:1")
+	s.inventory.store_in_crate("npc:1", "bld:999")  # crate that does not exist
+	SaveService.save(s, dir, SaveService.Kind.MANUAL)
+	var r := _load(s)
+	assert_true(r.ok)
+	assert_eq(r.data["dropped"]["orphan_crate_items"], 1)
+	var l: WorldSession = r.data["session"]
+	assert_eq(l.inventory.crate_kg("bld:999"), 0.0)
+	assert_eq(l.inventory.total_kg_by_material().get(&"rock", 0.0), 30.0, "nothing lost")
 
 
 func test_v1_save_migrates() -> void:
@@ -105,7 +144,7 @@ func test_v1_save_migrates() -> void:
 	assert_eq(l.jobs.check_invariants(), [] as Array[String])
 	# Re-saving writes v2.
 	assert_true(SaveService.save(l, dir, SaveService.Kind.AUTO).ok)
-	assert_eq(SaveService.read_file(dir.path_join("autosave.save"))["payload"]["save_version"], 2)
+	assert_eq(SaveService.read_file(dir.path_join("autosave.save"))["payload"]["save_version"], SaveService.SAVE_VERSION)
 
 
 func test_unknown_future_version_refused() -> void:

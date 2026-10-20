@@ -9,7 +9,7 @@ extends RefCounted
 signal designations_changed(rect: Rect2i)
 
 ## Stored in save files: NEVER renumber or reuse a value.
-enum Kind { NONE = 0, DIG = 1, BUILD_WALL = 2, BUILD_LADDER = 3 }
+enum Kind { NONE = 0, DIG = 1, BUILD_WALL = 2, BUILD_LADDER = 3, DECONSTRUCT = 4 }
 
 const DEFAULT_PRIORITY := 5
 const MIN_PRIORITY := 1
@@ -42,12 +42,16 @@ func entries() -> Dictionary:
 	return _by_index
 
 
-func is_valid_for(kind: int, tile_id: int, structure: int = WorldGrid.Structure.NONE) -> bool:
+func is_valid_for(kind: int, tile_id: int, structure: int = WorldGrid.Structure.NONE,
+		has_building: bool = false) -> bool:
 	match kind:
 		Kind.DIG:
 			return grid.can_dig(tile_id)
 		Kind.BUILD_WALL, Kind.BUILD_LADDER:
-			return grid.can_build(tile_id) and structure == WorldGrid.Structure.NONE
+			return grid.can_build(tile_id) and structure == WorldGrid.Structure.NONE and not has_building
+		Kind.DECONSTRUCT:
+			# Player-built things only: concrete walls, ladders, buildings (M3 contract §5).
+			return grid.can_deconstruct(tile_id) or structure != WorldGrid.Structure.NONE or has_building
 	return false
 
 
@@ -69,8 +73,8 @@ func designate(rect: Rect2i, kind: Kind, priority: int = DEFAULT_PRIORITY) -> Co
 			_priority[idx] = priority
 			added += 1
 	if added == 0:
-		return CommandResult.failure(&"nothing_to_designate",
-				"Nothing in the selection can be %s" % ("dug" if kind == Kind.DIG else "built on"))
+		var verb := "dug" if kind == Kind.DIG else ("deconstructed" if kind == Kind.DECONSTRUCT else "built on")
+		return CommandResult.failure(&"nothing_to_designate", "Nothing in the selection can be %s" % verb)
 	designations_changed.emit(r)
 	return CommandResult.success({"added": added, "skipped": r.get_area() - added})
 
@@ -144,7 +148,8 @@ func load_snapshot(snapshot: Dictionary) -> int:
 
 
 func _valid_at(kind: int, idx: int) -> bool:
-	return is_valid_for(kind, grid.tiles[idx], grid.structures[idx])
+	var p := Vector2i(idx % grid.width, idx / grid.width)
+	return is_valid_for(kind, grid.tiles[idx], grid.structures[idx], grid.has_building(p))
 
 
 func _on_tiles_changed(rect: Rect2i) -> void:

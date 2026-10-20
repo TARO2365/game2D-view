@@ -13,6 +13,9 @@ var grid: WorldGrid
 var designations: DesignationMap
 var inventory: Inventory
 var stockpiles: StockpileZones
+var buildings: Buildings
+var rooms: RoomMap
+var crates: CrateStorage
 var nav: NavGrid
 var jobs: JobManager
 var colony: Colony
@@ -32,9 +35,14 @@ static func from_grid(world_meta: Dictionary, world_grid: WorldGrid) -> WorldSes
 	var s := WorldSession.new()
 	s.meta = world_meta.duplicate()
 	s.grid = world_grid
+	# Buildings first: it registers itself as the grid's building query, which
+	# DesignationMap and WorldGrid edits consult (M3 contract §2, §6).
+	s.buildings = Buildings.new(s.grid, s.ids)
 	s.designations = DesignationMap.new(s.grid)
 	s.inventory = Inventory.new(s.ids)
 	s.stockpiles = StockpileZones.new(s.grid, s.inventory)
+	s.rooms = RoomMap.new(s.grid, s.buildings)
+	s.crates = CrateStorage.new(s.buildings, s.inventory)
 	var config := load(SCALE_CONFIG_PATH) as ScaleConfig
 	s.nav = NavGrid.new(s.grid, config.clearance_standard_tiles)
 	s.jobs = JobManager.new(s.grid, s.designations, s.inventory, s.stockpiles, s.nav, s.ids)

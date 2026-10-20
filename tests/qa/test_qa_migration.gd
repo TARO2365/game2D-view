@@ -67,7 +67,9 @@ func test_v1_world_with_many_dig_orders_is_worked_after_migration() -> void:
 	var r := SaveService.load_world(dir, reg, meta)
 	assert_true(r.ok, str(r))
 	assert_eq(r.data["migrated_from"], 1)
-	assert_eq(r.data["dropped"], {"designations": 0, "inventory": 0, "stockpiles": 0, "colony": 0, "jobs": 0})
+	# Lead (M3): key set grew with save v3 (buildings, crates, orphan_crate_items); intent unchanged — nothing dropped.
+	for k in r.data["dropped"]:
+		assert_eq(r.data["dropped"][k], 0, "dropped %s" % k)
 	var l: WorldSession = r.data["session"]
 	assert_eq(l.colony.count(), Colony.START_NPCS)
 	assert_eq(l.designations.count(), orders)
@@ -116,11 +118,11 @@ func test_v1_world_with_many_dig_orders_is_worked_after_migration() -> void:
 	assert_eq(l.designations.count(), 120, "only the buried orders remain")
 	assert_almost_eq(float(l.inventory.spawned_kg_by_material().get(&"dirt", 0.0)), shallow.size() * 50.0, 0.001,
 			"one 50 kg drop per dug surface tile")
-	# Re-save writes v2 and round-trips with no loss.
+	# Re-save writes the current version and round-trips with no loss.
 	assert_true(SaveService.save(l, dir, SaveService.Kind.AUTO).ok)
 	var r2 := SaveService.load_world(dir, reg, meta)
 	assert_true(r2.ok)
 	var l2: WorldSession = r2.data["session"]
-	assert_eq(r2.data["migrated_from"], 2)
+	assert_eq(r2.data["migrated_from"], SaveService.SAVE_VERSION)
 	assert_eq(l2.inventory.to_snapshot()["items"], l.inventory.to_snapshot()["items"])
 	assert_eq(l2.colony.count(), Colony.START_NPCS, "no second starting colony on re-load")

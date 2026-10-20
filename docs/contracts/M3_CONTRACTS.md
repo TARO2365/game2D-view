@@ -121,4 +121,14 @@ build_orders = BuildOrders.new(grid, buildings, designations, ids)
 jobs = JobManager.new(...)   # Colony Agent may extend its constructor; Lead wires it
 ```
 Save v3: adds `buildings`, `crates`, `build_orders`; inventory with CRATE holders; v2 → v3 migration = empty.
-Load order: designations, buildings, inventory, stockpiles, crates, build_orders, colony, jobs; rooms rebuilt last.
+Load order (D-024, as implemented): **buildings**, designations, inventory, stockpiles, crates, orphan-crate rescue,
+build_orders, colony, jobs; rooms rebuilt last. `dropped` gains `buildings`, `crates`, `orphan_crate_items`.
+
+**As implemented (World/Systems merged):** `Buildings.new(grid, ids, defs = null)` registers itself as the grid's
+building query (`grid.has_building(p)`); place/remove emit `grid.tiles_changed(footprint)` THEN
+`buildings_changed(footprint)`; support loss removes the building, then emits `building_lost` from inside the grid's
+`tiles_changed` handler. Extra: `Buildings.count()/room_tag_at()`, `RoomMap.room_count()/room_tiles(id)/rebuild_all()`,
+`WorldGrid.can_deconstruct()/notify_changed()`, `CrateStorage.is_crate()/booked_kg()`. `empty_crate_to_ground` on
+an empty crate succeeds (kg 0). Inventory never checks crate capacity/filter — book via CrateStorage first.
+Door rule per D-023. `DesignationMap.Kind.DECONSTRUCT = 4` is live; JobManager must handle it (currently it would
+treat it as a build order — Colony Agent fixes this in M3 phase 3).
