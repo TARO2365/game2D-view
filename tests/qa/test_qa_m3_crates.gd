@@ -70,9 +70,6 @@ func test_lead_a_second_crate_order_not_flagged_unreachable() -> void:
 ## confined NPC, try_assign treats it as a reach failure (_mark), and
 ## _sweep_unreachable then flags the job for everyone.
 func test_lead_a_no_material_confined_npc_not_unreachable() -> void:
-	pending("BUG M3-QA-4: 'no material' shown as unreachable when the NPC has a recorded region (lead a)")
-	return
-	@warning_ignore("unreachable_code")
 	var s: WorldSession = e.ses
 	var n := s.colony.spawn_npc(Vector2i(5, 9))
 	s.grid.apply_edit(Rect2i(30, 20, 4, 3), WorldGrid.Edit.DIG)     # sealed pocket
@@ -148,9 +145,6 @@ func test_filter_and_capacity() -> void:
 ## of dirt ends in the rock-only crate (_drive_haul stores into the booked
 ## crate without re-checking CrateStorage.accepts; set_filter keeps bookings).
 func test_filter_changed_while_carrying() -> void:
-	pending("BUG M3-QA-3: a stack booked before a filter change is still stored in the crate that now refuses it")
-	return
-	@warning_ignore("unreachable_code")
 	var s: WorldSession = e.ses
 	var n := s.colony.spawn_npc(Vector2i(5, 9))
 	s.stockpiles.designate(Rect2i(40, 9, 2, 1))

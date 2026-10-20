@@ -401,3 +401,30 @@ func test_stop_and_move_during_deconstruct() -> void:
 	assert_eq(j.worker_id, "")
 	assert_eq(j.work_ticks, done, "progress kept")
 	assert_true(_run(600, func() -> bool: return g.get_tile(Vector2i(20, 9)) == TileRegistry.AIR))
+
+
+func test_ladder_material_tracked_and_saved() -> void:
+	col.spawn_npc(Vector2i(5, 9))
+	inv.spawn_ground(&"rock", 25.0, Vector2i(2, 9))
+	des.designate(Rect2i(20, 9, 1, 1), K.BUILD_LADDER)
+	assert_true(_run(600, func() -> bool: return g.is_ladder(Vector2i(20, 9))))
+	var s: Dictionary = bytes_to_var(var_to_bytes(jobs.to_snapshot()))
+	assert_eq((s["ladders"] as Array).size(), 1)
+	assert_eq((s["ladders"] as Array)[0]["materials"], {"rock": 25.0})
+	assert_eq(jobs.load_snapshot(s), 0, "reloaded: the material is still known")
+	des.designate(Rect2i(20, 9, 1, 1), K.DECONSTRUCT)
+	assert_true(_run(600, func() -> bool: return not g.is_ladder(Vector2i(20, 9))))
+	assert_almost_eq(_kg(&"rock"), 25.0, 0.001, "rock ladder refunds rock")
+	assert_almost_eq(_kg(&"dirt"), 0.0, 0.001)
+	assert_eq(jobs.load_snapshot({"jobs": []}), 0, "old snapshots without ladders load")
+
+
+func test_filter_change_mid_haul_rebooks() -> void:
+	var n := col.spawn_npc(Vector2i(5, 9))
+	sp.designate(Rect2i(30, 9, 1, 1))
+	var cid: String = bld.place(&"crate", Vector2i(20, 9), {&"dirt": 50.0}).data["id"]
+	var d := inv.spawn_ground(&"dirt", 40.0, Vector2i(3, 9))
+	assert_true(_run(300, func() -> bool: return inv.carried_by(n.id) != null))
+	crates.set_filter(cid, [&"rock"] as Array[StringName])
+	assert_true(_run(600, func() -> bool: return sp.is_stored(inv.get_item(d))))
+	assert_almost_eq(inv.crate_kg(cid), 0.0, 0.001)

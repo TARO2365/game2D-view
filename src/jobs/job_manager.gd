@@ -81,6 +81,16 @@ var _by_tile: Dictionary = {}        # tile index -> job id (dig / build / decon
 var _by_order: Dictionary = {}       # build order id -> building job id
 var _decon_by_building: Dictionary = {}  # building id -> deconstruct job id
 var _job_tiles: Dictionary = {}      # building deconstruct job id -> [designated tile indices]
+## Crate index kept from items_changed / crates_changed (M3-QA-6: never scan
+## every item or every building per candidate in hot loops).
+var _item_crate: Dictionary = {}     # item id in a crate -> [crate id, kg]
+var _crate_items_idx: Dictionary = {}  # crate id -> {item id: true}
+var _crate_kg_idx: Dictionary = {}   # crate id -> kg stored
+var _crate_list: Array = []          # [{id, tile, storage, filter: Array}] (crate id order)
+var _crate_list_valid: bool = false
+## Material each ladder tile was built from (tile index -> {material: kg}),
+## refunded by deconstruction (M3-QA-1). Saved in the jobs snapshot.
+var _ladder_mats: Dictionary = {}
 var _item_res: Dictionary = {}       # reserved ground item id -> job id
 var _site_kg: Dictionary = {}        # build job id -> kg delivered (mirror of Inventory)
 var _ground: Dictionary = {}         # ground item id -> chunk index (cache from items_changed)
@@ -423,7 +433,14 @@ func needs_new_route(npc: Npc) -> bool:
 			return true  # the stack moved (fell, crate emptied) or is gone
 	match job.kind:
 		Job.KIND_HAUL:
-			return job.phase == Job.PHASE_DELIVER and _haul_target(job) == NO_TILE
+			if job.phase != Job.PHASE_DELIVER:
+				return false
+			var bc := _booked_crate(job)
+			if not bc.is_empty():
+				var c := inventory.get_item(job.carried_id)
+				if c != null and not crates.accepts(bc, c.material):
+					return true  # filter changed: stop and re-book
+			return _haul_target(job) == NO_TILE
 		Job.KIND_DIG, Job.KIND_DECONSTRUCT:
 			return not _work_goals(job).has(dest)
 		Job.KIND_BUILD, Job.KIND_BUILDING:
@@ -505,7 +522,18 @@ func to_snapshot() -> Dictionary:
 	var out: Array = []
 	for job: Job in _jobs.values():
 		out.append(job.to_dict())
-	return {"jobs": out}
+	var ladders: Array = []
+	var keys := _ladder_mats.keys()
+	keys.sort()
+	for idx: int in keys:
+		var t := _tile_of(idx)
+		if not grid.is_ladder(t):
+			continue  # stale (ladder gone without a deconstruct job)
+		var mats := {}
+		for m: StringName in _ladder_mats[idx]:
+			mats[String(m)] = float(_ladder_mats[idx][m])
+		ladders.append({"tile": t, "materials": mats})
+	return {"jobs": out, "ladders": ladders}
 
 
 ## Restores jobs and re-validates every reservation against Inventory,
@@ -534,6 +562,12 @@ func load_snapshot(s: Dictionary) -> int:
 	_geom_version += 1
 	_rebuild_ground()
 	var dropped := 0
+	_ladder_mats.clear()
+	var lad_v: Variant = s.get("ladders", [])  # absent in M2/early M3 saves: dirt refund
+	if typeof(lad_v) == TYPE_ARRAY:
+		for e: Variant in lad_v:
+			if not _load_ladder(e):
+				dropped += 1
 	var dropped_tiles := {}  # job id -> tile (to return orphan site items)
 	var carried_claims := {}  # carried item id -> job id
 	var list_v: Variant = s.get("jobs")
@@ -579,6 +613,26 @@ func load_snapshot(s: Dictionary) -> int:
 	_queue_all_loose()
 	jobs_changed.emit()
 	return dropped
+
+
+func _load_ladder(e: Variant) -> bool:
+	if typeof(e) != TYPE_DICTIONARY:
+		return false
+	var d: Dictionary = e
+	var t: Variant = d.get("tile")
+	var m_v: Variant = d.get("materials")
+	if typeof(t) != TYPE_VECTOR2I or typeof(m_v) != TYPE_DICTIONARY or not grid.is_ladder(t):
+		return false
+	var mats := {}
+	for m: Variant in m_v:
+		var kg: Variant = (m_v as Dictionary)[m]
+		if (typeof(m) == TYPE_STRING or typeof(m) == TYPE_STRING_NAME) and not String(m).is_empty() \
+				and (typeof(kg) == TYPE_FLOAT or typeof(kg) == TYPE_INT) and float(kg) > 0.0:
+			mats[StringName(m)] = float(kg)
+	if mats.is_empty():
+		return false
+	_ladder_mats[_idx(t)] = mats
+	return true
 
 
 ## Reconciles job <-> NPC links and carried items with Colony (after loads).
@@ -875,10 +929,13 @@ func _drive_haul(job: Job, npc: Npc) -> Dictionary:
 					job.carried_id = ""
 					_unassign(job)
 					return {"action": ACTION_NONE}
+				var bc := _booked_crate(job)
+				if not bc.is_empty() and not crates.accepts(bc, carried.material):
+					crates.release(job.id)  # filter changed on the way (M3-QA-3): re-book below
 				var t := _haul_target(job)
 				if t == NO_TILE:
 					# Booking lost (crate removed, zone gone): crate first, then a zone tile.
-					if not _book_storage(job, carried.material, carried.kg, npc.tile, null):
+					if not _book_storage(job, carried.material, carried.kg, npc.tile, npc):
 						_finish_haul_here(job, npc)
 						return {"action": ACTION_NONE}
 					t = _haul_target(job)
@@ -931,13 +988,16 @@ func _complete_build(job: Job) -> void:
 	if not ok:
 		_cancel(job)
 		return
+	var mats := {}
+	for it in inventory.site_items(job.id):
+		mats[it.material] = float(mats.get(it.material, 0.0)) + it.kg
 	job.phase = Job.PHASE_DONE
 	inventory.consume_site(job.id)
 	_site_kg.erase(job.id)
 	if wall:
 		grid.apply_edit(Rect2i(job.tile, Vector2i.ONE), WorldGrid.Edit.BUILD_WALL)
-	else:
-		grid.apply_structure(job.tile, WorldGrid.Structure.LADDER)
+	elif grid.apply_structure(job.tile, WorldGrid.Structure.LADDER).ok:
+		_ladder_mats[_idx(job.tile)] = mats  # refunded on deconstruct (M3-QA-1)
 	_remove_finished(job)
 
 
@@ -996,11 +1056,10 @@ func _drop_ok_for(t: Vector2i, npc: Npc) -> bool:
 ## Any crate or zone tile npc could deliver to (capacity not checked).
 func _has_usable_zone(npc: Npc) -> bool:
 	if npc._blocked_drops.is_empty() and not npc._region_valid:
-		return stockpiles.count() > 0 or (crates != null and not crates.crate_ids().is_empty())
-	if crates != null:
-		for cid in crates.crate_ids():
-			if _drop_ok_for(_crate_tile(cid), npc):
-				return true
+		return stockpiles.count() > 0 or not _crates_cached().is_empty()
+	for e: Dictionary in _crates_cached():
+		if _drop_ok_for(e["tile"], npc):
+			return true
 	for t in stockpiles.tiles():
 		if _drop_ok_for(t, npc):
 			return true
@@ -1025,16 +1084,16 @@ func _book_storage(job: Job, material: StringName, kg: float, near: Vector2i, np
 	if crates != null:
 		var best := ""
 		var best_d := 0
-		for cid in crates.crate_ids():
-			var ct := _crate_tile(cid)
-			if ct == skip or (npc != null and not _drop_ok_for(ct, npc)):
-				continue
-			if not crates.accepts(cid, material) or crates.free_capacity(cid) + KG_EPSILON < kg:
-				continue
+		for e: Dictionary in _crates_cached():
+			var ct: Vector2i = e["tile"]
 			var d := absi(ct.x - near.x) + absi(ct.y - near.y)
-			if best.is_empty() or d < best_d:
-				best = cid
-				best_d = d
+			if (not best.is_empty() and d >= best_d) or ct == skip:
+				continue
+			if (npc != null and not _drop_ok_for(ct, npc)) or not _crate_accepts(e, material) \
+					or _crate_free(e) + KG_EPSILON < kg:
+				continue
+			best = e["id"]
+			best_d = d
 		if not best.is_empty() and crates.book(best, kg, job.id).ok:
 			stockpiles.release(job.id)
 			return true
@@ -1106,7 +1165,12 @@ func _first_goals(job: Job, npc: Npc) -> Dictionary:
 			else:
 				item_id = _find_material(job, npc)
 				if item_id.is_empty():
-					return {"reason": "no material in reach" if npc._region_valid else REASON_NO_MATERIAL}
+					# M3-QA-4: "no material" only when none exists anywhere; a
+					# confined NPC whose material lies outside its region has a
+					# reach problem (marked for that NPC only).
+					if npc._region_valid and not _find_material(job, npc, false).is_empty():
+						return {"reason": "material out of reach"}
+					return {"reason": REASON_NO_MATERIAL}
 				goals = _reach_positions(_item_pos(inventory.get_item(item_id)), -1)
 				if goals.is_empty():
 					_set_item_unreachable(item_id, _tick)
@@ -1165,27 +1229,30 @@ func _give_up(job: Job, reason: String) -> void:
 ## Nearest unreserved accepted ground item (Manhattan from the NPC). Items
 ## held by a haul job nobody works on yet may be taken over. A confined NPC
 ## only considers items inside its reach.
-func _find_material(job: Job, npc: Npc) -> String:
+func _find_material(job: Job, npc: Npc, in_region: bool = true) -> String:
 	var mats: Array = _recipe(job).get("materials", [])
 	var near := npc.tile
 	var best := ""
 	var best_d := 0
 	# Stacks in crates (M3): taken out with take_from_crate.
-	if crates != null:
-		for cid in crates.crate_ids():
-			var ct := _crate_tile(cid)
-			var d := absi(ct.x - near.x) + absi(ct.y - near.y)
-			if not best.is_empty() and d >= best_d:
+	for e: Dictionary in _crates_cached():
+		var ct: Vector2i = e["tile"]
+		var d := absi(ct.x - near.x) + absi(ct.y - near.y)
+		if not best.is_empty() and d >= best_d:
+			continue
+		if in_region and npc._region_valid and not npc._region_reach.has(_idx(ct)):
+			continue
+		var held: Variant = _crate_items_idx.get(e["id"])
+		if held == null:
+			continue
+		for iid: String in held:
+			var it := inventory.get_item(iid)
+			if it == null or not (it.material in mats) or _item_res.has(iid) \
+					or int(_item_unreachable.get(iid, -1)) > _tick:
 				continue
-			if npc._region_valid and not npc._region_reach.has(_idx(ct)):
-				continue
-			for it in inventory.crate_items(cid):
-				if not (it.material in mats) or _item_res.has(it.id) \
-						or int(_item_unreachable.get(it.id, -1)) > _tick:
-					continue
-				best = it.id
-				best_d = d
-				break
+			best = iid
+			best_d = d
+			break
 	# Rings of chunks around the NPC (ground chunk index); stop once no unseen
 	# chunk can hold a nearer stack.
 	var c0 := Vector2i(clampi(near.x, 0, grid.width - 1), clampi(near.y, 0, grid.height - 1)) \
@@ -1215,7 +1282,7 @@ func _find_material(job: Job, npc: Npc) -> String:
 						continue
 					if int(_item_unreachable.get(iid, -1)) > _tick:
 						continue
-					if npc._region_valid and not npc._region_reach.has(_idx(it.tile)):
+					if in_region and npc._region_valid and not npc._region_reach.has(_idx(it.tile)):
 						continue
 					var owner_id: String = _item_res.get(iid, "")
 					if not owner_id.is_empty():
@@ -1426,9 +1493,13 @@ func _complete_deconstruct(job: Job) -> void:
 			var rec := ConstructionDefs.recipe(ConstructionDefs.KIND_BUILD_WALL)
 			_drop_materials({rec["materials"][0]: rec["kg"]}, job.tile)
 	elif grid.is_ladder(job.tile):
-		if grid.remove_structure(job.tile).ok:
+		var mats: Dictionary = _ladder_mats.get(_idx(job.tile), {})
+		if mats.is_empty():  # built before materials were tracked (old save, dev tool)
 			var rec := ConstructionDefs.recipe(ConstructionDefs.KIND_BUILD_LADDER)
-			_drop_materials({LADDER_REFUND_MATERIAL: rec["kg"]}, job.tile)
+			mats = {LADDER_REFUND_MATERIAL: rec["kg"]}
+		_ladder_mats.erase(_idx(job.tile))
+		if grid.remove_structure(job.tile).ok:
+			_drop_materials(mats, job.tile)
 	_remove_finished(job)
 
 
@@ -1446,6 +1517,7 @@ func _on_building_lost(id: String, _key: StringName, origin: Vector2i, materials
 
 
 func _on_crates_changed(_building_id: String) -> void:
+	_crate_list_valid = false
 	# A new crate (or a filter change) may take items that had no place.
 	for iid: String in _haul_retry:
 		_queue_item(iid)
@@ -1914,6 +1986,11 @@ func _unmap_decon_tile(job: Job, idx: int) -> bool:
 				and _by_tile.get(i, "") == job.id:
 			left.append(i)
 	if left.is_empty():
+		# Unmap every tile still pointing at the job (several may lose their
+		# order in the same change, M3-QA-2), then cancel it.
+		for i: int in tl:
+			if _by_tile.get(i, "") == job.id:
+				_by_tile.erase(i)
 		_job_tiles.erase(job.id)
 		_cancel(job)
 		return true
@@ -2052,9 +2129,10 @@ func _haul_scan(tick: int) -> void:
 			_haul_retry[iid] = true
 			continue
 		var kg := minf(it.kg, Inventory.CARRY_CAPACITY_KG)
-		# Crates first (D-021): nearest accepting crate with room.
+		# Crates first (D-021): nearest accepting crate with room (find_crate
+		# semantics, from the crate index: no per-crate inventory scans).
 		if crates != null:
-			var cid := crates.find_crate(it.material, kg, it.tile)
+			var cid := _nearest_crate_for(it.material, kg, it.tile)
 			if not cid.is_empty():
 				var cj := _new_haul_job(it)
 				if crates.book(cid, kg, cj.id).ok:
@@ -2078,6 +2156,26 @@ func _haul_scan(tick: int) -> void:
 			continue
 		free[best] -= kg
 		_add_haul_job(job, iid)
+
+
+## Nearest crate (Manhattan to its origin; ties: smaller y, then x, then id
+## order) accepting material with free room >= kg; "" if none.
+func _nearest_crate_for(material: StringName, kg: float, near: Vector2i) -> String:
+	var best := ""
+	var best_d := 0
+	var best_o := Vector2i.ZERO
+	for e: Dictionary in _crates_cached():
+		var o: Vector2i = e["tile"]
+		var d := absi(o.x - near.x) + absi(o.y - near.y)
+		if not best.is_empty() and (d > best_d or (d == best_d and (o.y > best_o.y
+				or (o.y == best_o.y and o.x >= best_o.x)))):
+			continue
+		if not _crate_accepts(e, material) or _crate_free(e) + KG_EPSILON < kg:
+			continue
+		best = e["id"]
+		best_d = d
+		best_o = o
+	return best
 
 
 func _new_haul_job(it: ItemStack) -> Job:
@@ -2119,6 +2217,8 @@ func _rebuild_ground() -> void:
 	for it in inventory.all_items():
 		if it.holder == Inventory.Holder.GROUND:
 			_ground_set(it)
+	_rebuild_crate_index()
+	_crate_list_valid = false
 
 
 ## Ground index: item id -> chunk, chunk -> {item id: true}.
@@ -2158,6 +2258,79 @@ func _on_items_changed(item_id: String) -> void:
 		_queue_item(item_id)
 	else:
 		_ground_unset(item_id)
+	if it != null and it.holder == Inventory.Holder.CRATE:
+		_crate_index_set(it)
+	else:
+		_crate_index_unset(item_id)
+
+
+# --- Crate index (M3-QA-6) ------------------------------------------------
+
+func _crate_index_set(it: ItemStack) -> void:
+	var old: Variant = _item_crate.get(it.id)
+	if old != null and old[0] == it.holder_id and is_equal_approx(float(old[1]), it.kg):
+		return
+	_crate_index_unset(it.id)
+	_item_crate[it.id] = [it.holder_id, it.kg]
+	if not _crate_items_idx.has(it.holder_id):
+		_crate_items_idx[it.holder_id] = {}
+	(_crate_items_idx[it.holder_id] as Dictionary)[it.id] = true
+	_crate_kg_idx[it.holder_id] = float(_crate_kg_idx.get(it.holder_id, 0.0)) + it.kg
+
+
+func _crate_index_unset(iid: String) -> void:
+	var old: Variant = _item_crate.get(iid)
+	if old == null:
+		return
+	_item_crate.erase(iid)
+	var cid: String = old[0]
+	var b: Variant = _crate_items_idx.get(cid)
+	if b != null:
+		(b as Dictionary).erase(iid)
+		if (b as Dictionary).is_empty():
+			_crate_items_idx.erase(cid)
+	var left := float(_crate_kg_idx.get(cid, 0.0)) - float(old[1])
+	if left <= KG_EPSILON:
+		_crate_kg_idx.erase(cid)
+	else:
+		_crate_kg_idx[cid] = left
+
+
+func _rebuild_crate_index() -> void:
+	_item_crate.clear()
+	_crate_items_idx.clear()
+	_crate_kg_idx.clear()
+	for it in inventory.all_items():
+		if it.holder == Inventory.Holder.CRATE:
+			_crate_index_set(it)
+
+
+## Crates with origin tile, capacity and filter; rebuilt only after
+## crates_changed (crate placed / removed / lost / filter changed).
+func _crates_cached() -> Array:
+	if _crate_list_valid or crates == null:
+		return _crate_list
+	_crate_list.clear()
+	for cid in crates.crate_ids():
+		var b := buildings.get_building(cid)
+		var d: BuildingDef = buildings.def(b["key"]) if not b.is_empty() else null
+		if d == null:
+			continue
+		var f: Array = []
+		f.assign(crates.get_filter(cid))
+		_crate_list.append({"id": cid, "tile": b["origin"], "storage": d.storage_kg, "filter": f})
+	_crate_list_valid = true
+	return _crate_list
+
+
+func _crate_free(e: Dictionary) -> float:
+	return maxf(0.0, float(e["storage"]) - float(_crate_kg_idx.get(e["id"], 0.0))
+			- crates.booked_kg(e["id"]))
+
+
+static func _crate_accepts(e: Dictionary, material: StringName) -> bool:
+	var f: Array = e["filter"]
+	return f.is_empty() or f.has(material)
 
 
 func _on_zones_changed(rect: Rect2i) -> void:
