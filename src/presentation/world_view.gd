@@ -91,16 +91,19 @@ func _release(c: Vector2i) -> void:
 
 func _fill(layer: TileMapLayer, c: Vector2i, rect: Rect2i) -> void:
 	var t := grid.tiles
+	var st := grid.structures
 	var origin := c * WorldGrid.CHUNK_SIZE
 	for y in range(rect.position.y, rect.end.y):
 		var row := y * grid.width
 		for x in range(rect.position.x, rect.end.x):
 			var id: int = t[row + x]
 			var local := Vector2i(x, y) - origin
-			if id == TileRegistry.AIR:
-				layer.erase_cell(local)
+			if id != TileRegistry.AIR:
+				layer.set_cell(local, PlaceholderTiles.TERRAIN_SOURCE, Vector2i(id, 0))
+			elif st[row + x] != WorldGrid.Structure.NONE:
+				layer.set_cell(local, PlaceholderTiles.STRUCTURE_SOURCE, Vector2i(st[row + x], 0))
 			else:
-				layer.set_cell(local, 0, Vector2i(id, 0))
+				layer.erase_cell(local)
 
 
 func _on_tiles_changed(rect: Rect2i) -> void:

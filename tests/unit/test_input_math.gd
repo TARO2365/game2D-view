@@ -55,3 +55,56 @@ func test_ctrl_shortcut_does_not_pan() -> void:
 func test_drag_rect_normalised() -> void:
 	assert_eq(ToolController.rect_from_tiles(Vector2i(5, 9), Vector2i(2, 3)), Rect2i(2, 3, 4, 7))
 	assert_eq(ToolController.rect_from_tiles(Vector2i(4, 4), Vector2i(4, 4)), Rect2i(4, 4, 1, 1))
+
+
+# --- M2 presentation helpers ----------------------------------------------
+
+func test_npc_feet_position_interpolates_bottom_centre() -> void:
+	assert_eq(NpcView.feet_position(Vector2i(2, 5), Vector2i(2, 5), 0.0, 64), Vector2(160, 384))
+	assert_eq(NpcView.feet_position(Vector2i(2, 5), Vector2i(3, 5), 0.5, 64), Vector2(192, 384))
+	assert_eq(NpcView.feet_position(Vector2i(2, 5), Vector2i(3, 4), 2.0, 64), Vector2(224, 320), "clamped")
+
+
+func test_smooth_toward_approaches_and_snaps() -> void:
+	var p := NpcView.smooth_toward(Vector2.ZERO, Vector2(10, 0), 0.016, 18.0, 192.0)
+	assert_gt(p.x, 0.0)
+	assert_lt(p.x, 10.0)
+	assert_eq(NpcView.smooth_toward(Vector2.ZERO, Vector2(500, 0), 0.016, 18.0, 192.0), Vector2(500, 0), "snap")
+	var q := Vector2.ZERO
+	for i in 120:
+		q = NpcView.smooth_toward(q, Vector2(10, 0), 1.0 / 60.0, 18.0, 192.0)
+	assert_almost_eq(q.x, 10.0, 0.01, "converges within 2 s")
+
+
+func test_npc_colors_are_distinct_and_stable() -> void:
+	var seen: Array[Color] = []
+	for i in range(1, 11):
+		var c := NpcView.color_for_id("npc:%d" % i)
+		assert_eq(c, NpcView.color_for_id("npc:%d" % i), "stable")
+		for s in seen:
+			assert_gt(absf(s.h - c.h) + absf(s.s - c.s) + absf(s.v - c.v), 0.02, "distinct")
+		seen.append(c)
+
+
+func test_material_color_from_tile_defs() -> void:
+	var reg := TileRegistry.load_default()
+	assert_eq(NpcView.material_color(reg, &"rock"), reg.get_def(TileRegistry.ROCK).placeholder_color)
+	assert_eq(NpcView.material_color(reg, &"no_such"), Color.MAGENTA)
+
+
+func test_item_pile_offsets_unique_and_stacked() -> void:
+	var seen: Dictionary = {}
+	for i in ItemView.MAX_PILE_SHOWN:
+		var o := ItemView.pile_offset(i, 10.0)
+		assert_false(seen.has(o), "slot %d unique" % i)
+		seen[o] = true
+		assert_lte(o.y, 0.0, "never below the floor")
+	assert_eq(ItemView.pile_offset(0, 10.0).y, 0.0)
+	assert_lt(ItemView.pile_offset(5, 10.0).y, ItemView.pile_offset(3, 10.0).y, "top of the pile is higher")
+
+
+func test_order_tools_use_priority() -> void:
+	assert_true(ToolController.is_order_tool(ToolController.Tool.DIG))
+	assert_true(ToolController.is_order_tool(ToolController.Tool.LADDER))
+	assert_false(ToolController.is_order_tool(ToolController.Tool.STOCKPILE))
+	assert_false(ToolController.is_order_tool(ToolController.Tool.SELECT))
