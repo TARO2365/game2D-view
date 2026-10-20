@@ -15,3 +15,6 @@ extends Resource
 @export var hardness: float = 1.0
 ## Draw lighter speckles (ores) in placeholder art.
 @export var placeholder_speckle_light: bool = false
+## Mass of the material item spawned when this tile is dug (material = `key`).
+## 0 = drops nothing. PLACEHOLDER: dirt/rock/ores 50 kg (M2 contract §2).
+@export var drop_kg: float = 0.0

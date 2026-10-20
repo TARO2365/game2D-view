@@ -20,6 +20,7 @@ key = &"dirt"
 display_name = "Dirt"
 placeholder_color = Color(0.45, 0.31, 0.2, 1)
 hardness = 1.0
+drop_kg = 50.0
 
 [sub_resource type="Resource" id="Tile_rock"]
 script = ExtResource("2_def")
@@ -28,6 +29,7 @@ key = &"rock"
 display_name = "Rock"
 placeholder_color = Color(0.37, 0.36, 0.35, 1)
 hardness = 2.0
+drop_kg = 50.0
 
 [sub_resource type="Resource" id="Tile_iron"]
 script = ExtResource("2_def")
@@ -37,6 +39,7 @@ display_name = "Iron Ore"
 placeholder_color = Color(0.36, 0.42, 0.55, 1)
 hardness = 2.5
 placeholder_speckle_light = true
+drop_kg = 50.0
 
 [sub_resource type="Resource" id="Tile_gold"]
 script = ExtResource("2_def")
@@ -46,6 +49,7 @@ display_name = "Gold Ore"
 placeholder_color = Color(0.78, 0.6, 0.18, 1)
 hardness = 2.5
 placeholder_speckle_light = true
+drop_kg = 50.0
 
 [sub_resource type="Resource" id="Tile_crystal"]
 script = ExtResource("2_def")
@@ -55,6 +59,7 @@ display_name = "Crystal"
 placeholder_color = Color(0.58, 0.33, 0.8, 1)
 hardness = 3.0
 placeholder_speckle_light = true
+drop_kg = 50.0
 
 [sub_resource type="Resource" id="Tile_bedrock"]
 script = ExtResource("2_def")
