@@ -6,11 +6,14 @@ extends RefCounted
 ## Mutations go through apply_edit() / apply_structure(), which validate and
 ## emit tiles_changed with the exact changed rect so dependants update only
 ## that region. Two layers: terrain `tiles` and `structures` (ladders) that
-## sit in air tiles.
+## sit in air tiles. Buildings (M3) are owned by `Buildings`; the grid only
+## asks it which tiles are occupied (set_building_query) so walls and ladders
+## never go on a building tile.
 
 signal tiles_changed(rect: Rect2i)
 
-enum Edit { DIG, BUILD_WALL }
+## DECONSTRUCT_WALL (M3): CONCRETE -> AIR only. Append new values at the end.
+enum Edit { DIG, BUILD_WALL, DECONSTRUCT_WALL }
 ## Stored in save files: NEVER renumber or reuse a value.
 enum Structure { NONE = 0, LADDER = 1 }
 
@@ -28,6 +31,8 @@ var structures := PackedByteArray()
 var surface_y := PackedInt32Array()
 
 var _modified_chunks: Dictionary = {}  # chunk index -> true
+## func(p: Vector2i) -> bool: is a building on this tile? Set by Buildings.
+var _building_query: Callable = Callable()
 
 
 func _init(w: int, h: int, reg: TileRegistry) -> void:
@@ -81,13 +86,38 @@ func can_build(tile_id: int) -> bool:
 	return tile_id == TileRegistry.AIR
 
 
+func can_deconstruct(tile_id: int) -> bool:
+	return tile_id == TileRegistry.CONCRETE
+
+
+# --- Buildings hook (M3) ------------------------------------------------
+
+## Buildings registers `func(p: Vector2i) -> bool`. An invalid callable = no buildings.
+func set_building_query(query: Callable) -> void:
+	_building_query = query
+
+
+func has_building(p: Vector2i) -> bool:
+	return _building_query.is_valid() and bool(_building_query.call(p))
+
+
+## Announces a change that is not a terrain/structure edit (a building was
+## placed or removed) so dependants (navigation, rooms, designations) refresh
+## `rect`. Does not mark chunks modified: buildings are saved by Buildings.
+func notify_changed(rect: Rect2i) -> void:
+	var r := rect.intersection(bounds())
+	if r.has_area():
+		tiles_changed.emit(r)
+
+
 ## Validated terrain edit. In normal play this is only called by NPC jobs
 ## (M2+); in M1 only the debug instant-edit tool calls it (D-015).
 func apply_edit(rect: Rect2i, edit: Edit) -> CommandResult:
 	var r := rect.intersection(bounds())
 	if not r.has_area():
 		return CommandResult.failure(&"out_of_bounds", "Selection is outside the world")
-	var target := TileRegistry.AIR if edit == Edit.DIG else TileRegistry.CONCRETE
+	var target := TileRegistry.CONCRETE if edit == Edit.BUILD_WALL else TileRegistry.AIR
+	var check_buildings := edit == Edit.BUILD_WALL and _building_query.is_valid()
 	var changed := 0
 	var min_p := Vector2i(width, height)
 	var max_p := Vector2i(-1, -1)
@@ -95,9 +125,17 @@ func apply_edit(rect: Rect2i, edit: Edit) -> CommandResult:
 		var row := y * width
 		for x in range(r.position.x, r.end.x):
 			var cur: int = tiles[row + x]
-			# Walls never replace a structure. Solid tiles never hold one, so DIG is unaffected.
-			var ok := can_dig(cur) if edit == Edit.DIG \
-					else (can_build(cur) and structures[row + x] == Structure.NONE)
+			# Walls never replace a structure or a building. Solid tiles never hold
+			# either, so DIG and DECONSTRUCT_WALL are unaffected.
+			var ok := false
+			match edit:
+				Edit.DIG:
+					ok = can_dig(cur)
+				Edit.BUILD_WALL:
+					ok = can_build(cur) and structures[row + x] == Structure.NONE \
+							and not (check_buildings and bool(_building_query.call(Vector2i(x, y))))
+				Edit.DECONSTRUCT_WALL:
+					ok = can_deconstruct(cur)
 			if not ok:
 				continue
 			tiles[row + x] = target
@@ -106,9 +144,10 @@ func apply_edit(rect: Rect2i, edit: Edit) -> CommandResult:
 			max_p = Vector2i(maxi(max_p.x, x), maxi(max_p.y, y))
 			_modified_chunks[chunk_index(Vector2i(x / CHUNK_SIZE, y / CHUNK_SIZE))] = true
 	if changed == 0:
+		var verb: String = {Edit.DIG: "dug", Edit.BUILD_WALL: "built on",
+				Edit.DECONSTRUCT_WALL: "deconstructed"}.get(edit, "changed")
 		return CommandResult.failure(&"nothing_to_change",
-				"Nothing in the selection can be %s" % ("dug" if edit == Edit.DIG else "built on"),
-				{"skipped": r.get_area()})
+				"Nothing in the selection can be %s" % verb, {"skipped": r.get_area()})
 	var changed_rect := Rect2i(min_p, max_p - min_p + Vector2i.ONE)
 	tiles_changed.emit(changed_rect)
 	return CommandResult.success({"changed": changed, "skipped": r.get_area() - changed,
@@ -121,7 +160,7 @@ func can_place_structure(p: Vector2i, s: Structure) -> bool:
 	if s == Structure.NONE or not in_bounds(p):
 		return false
 	var i := p.y * width + p.x
-	return tiles[i] == TileRegistry.AIR and structures[i] == Structure.NONE
+	return tiles[i] == TileRegistry.AIR and structures[i] == Structure.NONE and not has_building(p)
 
 
 ## Validated structure placement (JobManager calls it when a build finishes).
@@ -135,6 +174,8 @@ func apply_structure(p: Vector2i, s: Structure) -> CommandResult:
 		return CommandResult.failure(&"occupied", "A structure is already there")
 	if tiles[i] != TileRegistry.AIR:
 		return CommandResult.failure(&"blocked", "Structures need an open tile")
+	if has_building(p):
+		return CommandResult.failure(&"occupied", "A building is already there")
 	structures[i] = s
 	_structure_changed(p)
 	return CommandResult.success({"rect": Rect2i(p, Vector2i.ONE)})
