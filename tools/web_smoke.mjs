@@ -100,7 +100,17 @@ try {
   console.log("console lines:", logs.length, "| errors:", logs.filter((l) => /error|exception/i.test(l)).length);
 } finally {
   try { ws?.close(); } catch {}
-  // proc.kill() leaves Edge's child processes alive on Windows (QA-11): kill the tree.
-  if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
-  else proc.kill();
+  // proc.kill() leaves Edge's child processes alive on Windows (QA-11). Edge also
+  // re-parents helpers outside the tree, so kill the tree AND every process
+  // using this run's profile, then wait until the debug port is really free.
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+    const ps = `Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" | ` +
+      `Where-Object { $_.CommandLine -like '*${profile.replace(/'/g, "''")}*' } | ` +
+      `ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+    spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { stdio: "ignore" });
+  } else proc.kill();
+  for (let i = 0; i < 25; i++) {
+    try { await fetch(`http://127.0.0.1:${port}/json/version`); await sleep(200); } catch { break; }
+  }
 }
