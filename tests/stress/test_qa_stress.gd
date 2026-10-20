@@ -67,10 +67,15 @@ func test_dig_and_build_accounting_orders_only() -> void:
 	var before_tiles := h.s.grid.tiles.duplicate()
 	var before_struct := h.s.grid.structures.duplicate()
 	var ordered := {}  # tile index -> kinds ever ordered there
-	h.s.designations.designations_changed.connect(func(_r: Rect2i) -> void:
+	# NOTE: this lambda captures h, and is connected to a signal of an object h
+	# owns -> a RefCounted cycle. It MUST be disconnected again (it caused the
+	# "526 ObjectDB instances were leaked at exit" of run_stress.ps1; QA-10).
+	var on_orders := func(_r: Rect2i) -> void:
 		for idx: int in h.s.designations.entries():
-			ordered[idx] = true)
+			ordered[idx] = true
+	h.s.designations.designations_changed.connect(on_orders)
 	var next_action := 1
+	var failed := ""
 	for i in 6000:
 		if h.now() >= next_action:
 			h.random_action()
@@ -79,8 +84,12 @@ func test_dig_and_build_accounting_orders_only() -> void:
 		if i % 5 == 0:
 			var errs := h.check_all()
 			if not errs.is_empty():
-				fail_test("tick %d: %s\n%s" % [h.now(), errs.slice(0, 5), h.recent_log()])
-				return
+				failed = "tick %d: %s\n%s" % [h.now(), errs.slice(0, 5), h.recent_log()]
+				break
+	h.s.designations.designations_changed.disconnect(on_orders)
+	if not failed.is_empty():
+		fail_test(failed)
+		return
 	var g := h.s.grid
 	var expect_spawn := {}
 	var dug := 0
