@@ -21,6 +21,9 @@ Status values: **APPROVED** (owner said yes), **DELEGATED** (owner asked Lead to
 | D-014 | 2026-10-20 | **Up to 3 saved worlds** may be stored (each = its own folder with manual + autosave per D-007). **Only one world is loaded/played at a time** — never simulated concurrently. Creating a 4th is blocked until the player deletes one; delete requires explicit confirmation in UI. Supersedes spec §11 "One world" (spec text update pending, OQ-16). | APPROVED | Owner answer to OQ-14 |
 | D-015 | 2026-10-20 | Player never edits terrain directly (ONI-style). Dig/Build tools create **designations** (`DesignationMap`, saved); NPC jobs execute them from M2. Debug builds have an F9 "instant edit" for testing only. | APPROVED | Owner, M1 plan P-1 option A |
 | D-016 | 2026-10-20 | M1 plan approved: world presets S 384×192 / M 512×256 (default) / L 1024×384; fog of war → M7; save = `meta.json` + compressed binary with checksum; gen-version mismatch refused; min spec per plan P-6; New World dialog has a name field (required, ≤32 chars, unique). | APPROVED | Owner |
+| D-017 | 2026-10-20 | M2 plan approved: start with 3 NPCs; no wall climbing (1-tile steps, drops ≤ 4, ladders); basic construction (ladder + wall, hauled materials) moved from M3 into M2; bundle Noto Sans Thai (OFL); walk ≈ 2 tiles/s placeholder; simulation determinism not required. | APPROVED | Owner, M2 plan P-1…P-6 |
+| D-018 | 2026-10-20 | Seeds are random by default: New World dialog pre-fills a random seed and offers re-roll. Seed is still stored per world (saves regenerate unchanged chunks from it). | APPROVED | Owner |
+| D-019 | 2026-10-20 | M2 module contracts per `docs/contracts/M2_CONTRACTS.md` (ownership, tick order, APIs, invariants, save v2). | DELEGATED | Lead |
 
 ## Rationale notes
 - **D-003 clearance 3:** concept sheet shows NPC ≈ 2.5 tiles and ordinary zombie ≈ 3 tiles. A 2-tile corridor

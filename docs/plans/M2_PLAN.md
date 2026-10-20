@@ -1,6 +1,7 @@
 # M2 PLAN — NPCs, movement, jobs, reservations, hauling
 
-**Status:** PROPOSED — awaiting owner approval (gate G2). No M2 code until approved.
+**Status:** APPROVED by owner 2026-10-20 (P-1…P-6 all approved). Owner note: "seed must be random" →
+New World dialog pre-fills a random seed with a re-roll button (D-018); worlds stay reproducible from their stored seed.
 **Spec §13 M2:** NPC movement, job queue, reservations, hauling. Acceptance: no duplicate job/material claims; NPCs physically transport goods.
 
 ## 1. Scope
