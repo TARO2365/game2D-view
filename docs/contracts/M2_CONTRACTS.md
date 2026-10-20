@@ -157,8 +157,18 @@ func check_invariants() -> Array[String]          # empty = OK (QA uses this)
 func to_snapshot() -> Dictionary
 func load_snapshot(s: Dictionary) -> void         # must re-validate reservations
 ```
-`WorldSession` (Lead) constructs everything and calls, per `SimulationClock.ticked`:
+`WorldSession` (Lead) constructs everything in this order and calls, per `SimulationClock.ticked`:
 **1.** `jobs.update(tick)` **2.** `colony.update(tick)`.
+```gdscript
+var nav := NavGrid.new(grid, clearance_tiles)          # clearance from ScaleConfig (3)
+var jobs := JobManager.new(grid, designations, inventory, stockpiles, nav, ids)
+var colony := Colony.new(grid, nav, jobs, ids, world_seed)
+```
+`NavGrid` (Colony Agent, `src/navigation/nav_grid.gd`) public API:
+```gdscript
+func can_stand(feet: Vector2i) -> bool
+func find_path(from: Vector2i, goals: Array[Vector2i], max_expansions: int = 4000) -> Array[Vector2i]  # [] = none; excludes `from`
+```
 
 ## 8. Save v2 (Lead)
 `save_version = 2`. Payload adds `"structures"` inside chunk bytes (2 × area), `"inventory"`,
