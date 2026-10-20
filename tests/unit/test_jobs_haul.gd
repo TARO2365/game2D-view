@@ -188,3 +188,36 @@ func test_unreachable_stockpile_not_retried_by_same_npc() -> void:
 	_run(1500)
 	assert_lte(pickups[0], 1)
 	assert_eq(n.state, &"idle")
+
+
+func test_haul_rebooks_to_reachable_zone_tile() -> void:
+	g.apply_edit(Rect2i(30, 6, 1, 4), WorldGrid.Edit.BUILD_WALL)  # pillar
+	sp.designate(Rect2i(30, 5, 1, 1))   # nearest zone tile, on the pillar: unreachable
+	sp.designate(Rect2i(14, 9, 1, 1))   # farther, reachable
+	var id := inv.spawn_ground(&"dirt", 50.0, Vector2i(25, 9))
+	col.spawn_npc(Vector2i(5, 9))
+	var pickups := [0]
+	inv.items_changed.connect(func(iid: String) -> void:
+		var it := inv.get_item(iid)
+		if it != null and it.holder == Inventory.Holder.NPC:
+			pickups[0] += 1)
+	assert_true(_run(3000, func() -> bool:
+		var st := inv.get_item(id)
+		return st.tile == Vector2i(14, 9) and st.holder == Inventory.Holder.GROUND))
+	assert_lte(pickups[0], 2, "at most one wasted trip to the pillar")
+	assert_eq(sp.to_snapshot()["bookings"].size(), 0)
+
+
+func test_stack_dropped_on_ladder_lands_on_floor() -> void:
+	g.apply_edit(Rect2i(20, 10, 1, 8), WorldGrid.Edit.DIG)  # shaft rows 10..17, floor 18
+	for y in range(10, 18):
+		g.apply_structure(Vector2i(20, y), WorldGrid.Structure.LADDER)
+	sp.designate(Rect2i(2, 9, 1, 1))
+	inv.spawn_ground(&"dirt", 50.0, Vector2i(20, 17))
+	var n := col.spawn_npc(Vector2i(10, 9))
+	assert_true(_run(1500, func() -> bool:
+		return inv.carried_by(n.id) != null and n.tile.x == 20 and n.tile.y < 16 and n.tile.y > 10))
+	col.command_stop(n.id)
+	var it: ItemStack = inv.all_items()[0]
+	assert_eq(it.holder, Inventory.Holder.GROUND)
+	assert_eq(it.tile, Vector2i(20, 17), "fell down the shaft to its floor")
