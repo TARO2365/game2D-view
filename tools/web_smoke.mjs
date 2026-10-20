@@ -4,7 +4,7 @@
 //        {"key":"F9"|"Escape"|"Enter"|"Backspace", "ctrl":bool} {"shot":"name"}
 // The profile dir persists IndexedDB (user://) between runs, so a second run
 // tests that saves survive a browser restart. Requires tools/serve_web.js running.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -22,6 +22,13 @@ const browsers = [
   "C:/Program Files/Google/Chrome/Application/chrome.exe",
 ];
 const exe = process.env.LB_BROWSER || browsers.find(existsSync);
+// QA-11: never attach to a browser left over from an earlier run — that would
+// silently reuse its profile/page and invalidate "fresh profile" / "restart" checks.
+try {
+  await fetch(`http://127.0.0.1:${port}/json/version`);
+  console.error(`Port ${port} is already in use by another browser. Close it (or run tools/qa_web_smoke.ps1) and retry.`);
+  process.exit(3);
+} catch { /* port free: good */ }
 const proc = spawn(exe, ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
   "--window-size=1280,720", "--no-first-run", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "about:blank"],
   { stdio: "ignore" });
@@ -93,5 +100,7 @@ try {
   console.log("console lines:", logs.length, "| errors:", logs.filter((l) => /error|exception/i.test(l)).length);
 } finally {
   try { ws?.close(); } catch {}
-  proc.kill();
+  // proc.kill() leaves Edge's child processes alive on Windows (QA-11): kill the tree.
+  if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+  else proc.kill();
 }
