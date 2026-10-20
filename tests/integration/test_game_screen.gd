@@ -91,3 +91,23 @@ func test_orders_survive_save_and_load() -> void:
 	var r := slots.load_world(session.world_id())
 	assert_true(r.ok)
 	assert_eq(r.data["session"].designations.count(), 12)
+
+
+func test_toolbar_has_all_m2_tools_and_selector() -> void:
+	for t in ToolController.Tool.values():
+		assert_not_null(game.toolbar.get_tool_button(t), "button for tool %d" % t)
+	for p in range(DesignationMap.MIN_PRIORITY, DesignationMap.MAX_PRIORITY + 1):
+		assert_not_null(game.toolbar.get_priority_button(p))
+	assert_false(game.toolbar.priority_box.visible, "hidden with Select")
+	game.toolbar.get_tool_button(ToolController.Tool.PRIORITY).pressed.emit()
+	assert_eq(game.tools.tool, ToolController.Tool.PRIORITY)
+	assert_true(game.toolbar.priority_box.visible)
+
+
+func test_dev_instant_wall_still_works() -> void:
+	assert_true(game.tools.set_dev_instant(true).ok)
+	game.set_tool(ToolController.Tool.BUILD)
+	var x := 100
+	var r := game.tools.apply_rect(Rect2i(x, session.grid.surface_y[x] - 2, 1, 1))
+	assert_true(r.ok, str(r))
+	assert_true(session.grid.is_solid_at(Vector2i(x, session.grid.surface_y[x] - 2)))

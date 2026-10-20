@@ -35,6 +35,17 @@ func test_cells_match_grid() -> void:
 	assert_eq(layer.get_cell_atlas_coords(Vector2i(0, 12)), Vector2i(TileRegistry.DIRT, 0))
 
 
+func test_ladders_render_as_structure_cells() -> void:
+	view.update_visible(Rect2(0, 0, 10, 10))
+	var layer := view.get_chunk_layer(Vector2i(0, 0))
+	assert_true(g.apply_structure(Vector2i(3, 9), WorldGrid.Structure.LADDER).ok)
+	assert_eq(layer.get_cell_source_id(Vector2i(3, 9)), PlaceholderTiles.STRUCTURE_SOURCE)
+	assert_eq(layer.get_cell_atlas_coords(Vector2i(3, 9)), Vector2i(WorldGrid.Structure.LADDER, 0))
+	assert_eq(layer.get_cell_source_id(Vector2i(4, 9)), -1, "plain air stays empty")
+	assert_true(g.remove_structure(Vector2i(3, 9)).ok)
+	assert_eq(layer.get_cell_source_id(Vector2i(3, 9)), -1, "removed ladder erased")
+
+
 func test_edit_redraws_only_affected_loaded_chunk() -> void:
 	view.update_visible(Rect2(0, 0, 10, 10))  # loads chunks (0..1, 0..1)
 	view.redraw_count = 0

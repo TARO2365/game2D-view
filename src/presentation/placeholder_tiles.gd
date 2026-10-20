@@ -3,6 +3,11 @@ extends RefCounted
 ## Runtime-generated flat-color tiles. Obviously not final art; replaced when
 ## the Visual Design asset specification is approved (ASSET_CONVENTIONS.md).
 
+const TERRAIN_SOURCE := 0
+const STRUCTURE_SOURCE := 1
+const LADDER_COLOR := Color(0.85, 0.6, 0.25)  # PLACEHOLDER
+const LADDER_RUNGS := 3
+
 
 static func build_tileset(registry: TileRegistry, px: int) -> TileSet:
 	var count := registry.max_id() + 1
@@ -28,5 +33,26 @@ static func build_tileset(registry: TileRegistry, px: int) -> TileSet:
 			src.create_tile(Vector2i(d.id, 0))
 	var ts := TileSet.new()
 	ts.tile_size = Vector2i(px, px)
-	ts.add_source(src, 0)
+	ts.add_source(src, TERRAIN_SOURCE)
+	ts.add_source(_structure_source(px), STRUCTURE_SOURCE)
 	return ts
+
+
+## Structures (ladders) live on air tiles, so they share the chunk layer:
+## atlas coords = (WorldGrid.Structure value, 0).
+static func _structure_source(px: int) -> TileSetAtlasSource:
+	var count := WorldGrid.Structure.LADDER + 1
+	var img := Image.create(px * count, px, false, Image.FORMAT_RGBA8)
+	var ox := WorldGrid.Structure.LADDER * px
+	var rail := maxi(2, px / 10)
+	var inset := px / 6
+	for x in [ox + inset, ox + px - inset - rail]:
+		img.fill_rect(Rect2i(x, 0, rail, px), LADDER_COLOR)
+	for i in LADDER_RUNGS:
+		var y := int((i + 0.5) * px / LADDER_RUNGS) - rail / 2
+		img.fill_rect(Rect2i(ox + inset, y, px - 2 * inset, rail), LADDER_COLOR.lightened(0.2))
+	var src := TileSetAtlasSource.new()
+	src.texture = ImageTexture.create_from_image(img)
+	src.texture_region_size = Vector2i(px, px)
+	src.create_tile(Vector2i(WorldGrid.Structure.LADDER, 0))
+	return src
