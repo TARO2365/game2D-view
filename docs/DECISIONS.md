@@ -24,6 +24,9 @@ Status values: **APPROVED** (owner said yes), **DELEGATED** (owner asked Lead to
 | D-017 | 2026-10-20 | M2 plan approved: start with 3 NPCs; no wall climbing (1-tile steps, drops ≤ 4, ladders); basic construction (ladder + wall, hauled materials) moved from M3 into M2; bundle Noto Sans Thai (OFL); walk ≈ 2 tiles/s placeholder; simulation determinism not required. | APPROVED | Owner, M2 plan P-1…P-6 |
 | D-018 | 2026-10-20 | Seeds are random by default: New World dialog pre-fills a random seed and offers re-roll. Seed is still stored per world (saves regenerate unchanged chunks from it). | APPROVED | Owner |
 | D-019 | 2026-10-20 | M2 module contracts per `docs/contracts/M2_CONTRACTS.md` (ownership, tick order, APIs, invariants, save v2). | DELEGATED | Lead |
+| D-020 | 2026-10-20 | Art path **B then A**: Claude first draws improved, readable code-generated art (B); then owner-generated AI images replace it (A). A dedicated **Asset Agent** writes the asset spec and **image-generation prompts** for the owner, then slices/cleans/imports the images the owner returns. The owner runs the image AI; agents only deliver prompts. | APPROVED | Owner |
+| D-021 | 2026-10-20 | M3 plan approved in full (P-1…P-5): buildings door/crate/bed/table; room ≤ 128 tiles; deconstruction refunds 100 % for basic buildings; haulers prefer crates; Visual track V1 runs in parallel. | APPROVED | Owner |
+| D-022 | 2026-10-20 | M3 module contracts per `docs/contracts/M3_CONTRACTS.md`. | DELEGATED | Lead |
 
 ## Rationale notes
 - **D-003 clearance 3:** concept sheet shows NPC ≈ 2.5 tiles and ordinary zombie ≈ 3 tiles. A 2-tile corridor

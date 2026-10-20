@@ -34,6 +34,7 @@ reports to the owner are in Thai, code/identifiers/tech docs in English.
 | `src/persistence/` | Lead (contracts) + each module's snapshot functions |
 | `src/presentation/` | UI/UX Agent |
 | `tests/`, `docs/TEST_PLAN.md` | QA Agent (may block closure) |
+| `assets/`, `docs/art/` (asset spec, prompt packs), `src/presentation/art/`, `placeholder_tiles.gd`, `npc_view.gd`/`item_view.gd` drawing code | Asset Agent (D-020) — writes image-generation prompts for the owner; never claims AI images exist until the owner supplies them |
 
 Agents may not edit another role's paths concurrently. Cross-module change = contract change via Lead.
 
