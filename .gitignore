@@ -3,6 +3,9 @@
 *.translation
 # Build outputs and test reports
 build/
+# Raw AI images from the owner (large); processed files go to assets/production/
+assets/incoming/*
+!assets/incoming/.gdignore
 # Claude Code agent worktrees
 .claude/worktrees/
 # OS / editor
