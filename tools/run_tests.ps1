@@ -8,6 +8,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $godot = if ($env:GODOT) { $env:GODOT } else { "$env:LOCALAPPDATA\Programs\Godot\Godot_v4.7.2-stable_win64_console.exe" }
 
 New-Item -ItemType Directory -Force (Join-Path $root "build") | Out-Null
+# Godot must not import build outputs (Web export PNGs etc.).
+New-Item -ItemType File -Force (Join-Path $root "build/.gdignore") | Out-Null
 
 # Import pass builds .godot/ and the global class cache (needed on fresh clones).
 & $godot --headless --path $root --import

@@ -6,5 +6,6 @@ $godot = if ($env:GODOT) { $env:GODOT } else { "$env:LOCALAPPDATA\Programs\Godot
 $out = @{ "Web" = "build/web/index.html"; "Windows Desktop" = "build/windows/LastBunker.exe" }[$Preset]
 if (-not $out) { Write-Error "Unknown preset $Preset"; exit 2 }
 New-Item -ItemType Directory -Force (Join-Path $root (Split-Path $out)) | Out-Null
+New-Item -ItemType File -Force (Join-Path $root "build/.gdignore") | Out-Null  # keep Godot from importing builds
 & $godot --headless --path $root --export-debug $Preset (Join-Path $root $out)
 exit $LASTEXITCODE
