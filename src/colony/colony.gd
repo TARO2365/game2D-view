@@ -250,7 +250,7 @@ func _drive_job(n: Npc, tick: int) -> void:
 			if not nav.consume_budget(tick):
 				_refresh_state(n)
 				return  # wait for budget on a later tick
-			var path := nav.find_path(n.tile, goals)
+			var path := jobs.find_path_for(n, goals)
 			if path.is_empty():
 				jobs.report_unreachable(n, tick)
 				_refresh_state(n)
@@ -259,6 +259,8 @@ func _drive_job(n: Npc, tick: int) -> void:
 			_start_step(n)
 		JobManager.ACTION_WORK:
 			n.state = &"working"
+		JobManager.ACTION_WAIT:
+			n.state = &"waiting"
 		_:
 			if n.job_id.is_empty():
 				n.work_progress = 0.0
@@ -332,7 +334,34 @@ func _refresh_state(n: Npc) -> void:
 	if n._moving or not n._path.is_empty():
 		n.state = &"carrying" if jobs.inventory.carried_by(n.id) != null else &"moving"
 	else:
-		n.state = &"idle"
+		n.state = &"waiting" if not n.job_id.is_empty() else &"idle"
+
+
+## Moves an NPC that is not moving out of the way (e.g. it stands on a wall
+## site it is not building): its job is released (and ignored for
+## STOP_IGNORE_TICKS) and it walks to the nearest standable tile whose body
+## covers no wall order. True if it got somewhere to go.
+func step_aside(n: Npc) -> bool:
+	var groups := _stand_groups_near(n.tile, true)
+	var goal := NO_TILE
+	var path: Array[Vector2i] = []
+	for g: Array[Vector2i] in groups:
+		if g.has(n.tile):
+			return false  # already clear (should not happen when asked)
+		path = nav.find_path(n.tile, g)
+		if not path.is_empty():
+			goal = path[path.size() - 1]
+			break
+	if goal == NO_TILE:
+		return false
+	var jid := jobs.release_npc(n)
+	if not jid.is_empty():
+		n._ignore_job_id = jid
+		n._ignore_until = _tick + STOP_IGNORE_TICKS
+	n.command_target = goal
+	n._path = path
+	_refresh_state(n)
+	return true
 
 
 ## Called by JobManager when an NPC's job link ends (finish/cancel/release).
@@ -487,7 +516,7 @@ func _surface_tile(x: int) -> Vector2i:
 
 ## Standable tiles within MOVE_SEARCH_RADIUS of t, grouped by Manhattan
 ## distance (nearest group first, at most MOVE_SEARCH_GROUPS groups).
-func _stand_groups_near(t: Vector2i) -> Array:
+func _stand_groups_near(t: Vector2i, off_wall_orders: bool = false) -> Array:
 	var by_d := {}
 	for dy in range(-MOVE_SEARCH_RADIUS, MOVE_SEARCH_RADIUS + 1):
 		for dx in range(-MOVE_SEARCH_RADIUS, MOVE_SEARCH_RADIUS + 1):
@@ -495,7 +524,7 @@ func _stand_groups_near(t: Vector2i) -> Array:
 			if d > MOVE_SEARCH_RADIUS:
 				continue
 			var p := t + Vector2i(dx, dy)
-			if nav.can_stand(p):
+			if nav.can_stand(p) and not (off_wall_orders and jobs.body_on_wall_order(p)):
 				if not by_d.has(d):
 					var arr: Array[Vector2i] = []
 					by_d[d] = arr

@@ -158,3 +158,46 @@ func test_material_taken_from_stockpile_and_from_haul() -> void:
 				and g.get_tile(Vector2i(14, 9)) == TileRegistry.CONCRETE))
 	assert_eq(jobs.job_count(), 0, "the unstarted haul job gave its stack up")
 	assert_eq(sp.to_snapshot()["bookings"].size(), 0, "its booking was released")
+
+
+func test_wall_builder_clears_items_off_site() -> void:
+	var n := col.spawn_npc(Vector2i(5, 9))
+	for w in [&"haul"]:
+		col.set_work_enabled(n.id, w, false)  # nobody hauls: the builder must clear the site itself
+	inv.spawn_ground(&"rock", 50.0, Vector2i(2, 9))
+	inv.spawn_ground(&"dirt", 30.0, Vector2i(12, 9))
+	inv.spawn_ground(&"dirt", 20.0, Vector2i(12, 9))
+	des.designate(Rect2i(12, 9, 1, 1), K.BUILD_WALL)
+	var saw_clear := [false]
+	assert_true(_run(800, func() -> bool:
+		var j := jobs.job_at(Vector2i(12, 9))
+		if j != null and j.phase == Job.PHASE_CLEAR:
+			saw_clear[0] = true
+		return g.get_tile(Vector2i(12, 9)) == TileRegistry.CONCRETE))
+	assert_true(saw_clear[0])
+	assert_almost_eq(_kg(&"dirt"), 50.0, 0.001, "cleared stacks kept, nothing buried")
+	for it in inv.all_items():
+		assert_ne(it.tile, Vector2i(12, 9))
+		assert_false(g.is_solid_at(it.tile))
+
+
+func test_waiting_state_while_blocked() -> void:
+	var builder := col.spawn_npc(Vector2i(5, 9))
+	var idler := col.spawn_npc(Vector2i(12, 9))
+	for w in Npc.WORK_KEYS:
+		col.set_work_enabled(idler.id, w, false)
+	inv.spawn_ground(&"rock", 50.0, Vector2i(2, 9))
+	des.designate(Rect2i(12, 8, 1, 1), K.BUILD_WALL)
+	assert_true(_run(400, func() -> bool: return builder.state == &"waiting"))
+	assert_false(builder.job_id.is_empty(), "waiting = holds a job")
+	# The idle NPC on the site is asked to step aside; the wall then gets built.
+	assert_true(_run(400, func() -> bool: return g.get_tile(Vector2i(12, 8)) == TileRegistry.CONCRETE))
+	assert_false(jobs.body_on_wall_order(idler.tile))
+
+
+func test_builders_avoid_standing_on_other_wall_orders() -> void:
+	des.designate(Rect2i(12, 9, 2, 1), K.BUILD_WALL)
+	var goals := jobs._work_goals(jobs.job_at(Vector2i(12, 9)))
+	assert_false(goals.is_empty())
+	for f in goals:
+		assert_false(jobs.body_on_wall_order(f), "%s keeps clear of (13, 9)" % f)

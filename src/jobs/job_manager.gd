@@ -36,6 +36,12 @@ const HAUL_SCAN_PER_CADENCE := 32       # PLACEHOLDER loose items examined per N
 const HAUL_RETRY_TICKS := 50            # PLACEHOLDER: re-check items that had no drop tile
 const ASSIGN_CANDIDATES := 8            # PLACEHOLDER jobs considered per assignment attempt
 const REGION_MAX_TILES := 600           # PLACEHOLDER: larger confined regions are not cached
+const REGION_CACHE_SIZE := 16           # PLACEHOLDER: recorded regions shared between NPCs
+const SWEEP_PER_TICK := 16              # PLACEHOLDER: open jobs checked per tick for "nobody can reach"
+const STEP_ASIDE_AFTER_TICKS := 20      # PLACEHOLDER: wall blocked this long -> blocker steps aside
+const CLEAR_RADIUS := 4                 # PLACEHOLDER: where stacks cleared off a wall site go
+const DROP_BLOCK_MARGIN := 8            # PLACEHOLDER: terrain change this close re-allows a stockpile tile
+const GEO_UNREACHABLE := 1 << 60        # "until terrain changes" (order has no work position)
 const ID_CATEGORY := &"job"
 const NO_TILE := Vector2i(-1, -1)
 const KG_EPSILON := 0.001
@@ -68,7 +74,12 @@ var _jobs: Dictionary = {}           # job id -> Job (creation order)
 var _by_tile: Dictionary = {}        # tile index -> job id (dig / build)
 var _item_res: Dictionary = {}       # reserved ground item id -> job id
 var _site_kg: Dictionary = {}        # build job id -> kg delivered (mirror of Inventory)
-var _ground: Dictionary = {}         # ground item id -> true (cache from items_changed)
+var _ground: Dictionary = {}         # ground item id -> chunk index (cache from items_changed)
+var _ground_by_chunk: Dictionary = {}  # chunk index -> {ground item id: true}
+var _region_cache: Array = []        # [{tiles, reach, bbox}] recorded confined regions
+var _sweep_ids: Array = []           # job ids of the current unreachable sweep pass
+var _sweep_i: int = 0
+var _wall_orders: int = 0            # live BUILD_WALL jobs (= wall orders)
 var _open_chunks: Dictionary = {}    # chunk index -> {job id: Job} (no worker, not unreachable)
 var _prio_count := PackedInt32Array()  # open jobs per priority 0..9
 var _marked_chunks: Dictionary = {}  # chunk index -> {job id: true} (has unreachable marks)
@@ -115,6 +126,7 @@ func update(tick: int) -> void:
 	if _reconcile_pending:
 		revalidate()
 	_expire_unreachable(tick)
+	_sweep_unreachable(tick)
 	if SimulationClock.is_cadence_due(SimulationClock.Cadence.NORMAL, tick):
 		_haul_scan(tick)
 
@@ -259,6 +271,7 @@ func try_assign(npc: Npc, tick: int) -> CommandResult:
 		return CommandResult.failure(&"busy", "%s already has a job" % npc.id)
 	if nav.budget_left(tick) <= 0:
 		return CommandResult.failure(&"no_budget", "Path budget used up this tick")
+	_adopt_cached_region(npc)
 	for job in _top_candidates(npc, tick):
 		if not job._open:
 			continue  # changed by an earlier candidate (e.g. material taken over)
@@ -327,6 +340,10 @@ func needs_new_route(npc: Npc) -> bool:
 	if npc._path.is_empty():
 		return false
 	var dest: Vector2i = npc._path[npc._path.size() - 1]
+	if job.phase == Job.PHASE_FETCH and not job.item_id.is_empty():
+		var it := inventory.get_item(job.item_id)
+		if it == null or it.holder != Inventory.Holder.GROUND or it.tile != job._fetch_tile:
+			return true  # the stack moved (fell) or is gone
 	match job.kind:
 		Job.KIND_HAUL:
 			return job.phase == Job.PHASE_DELIVER and stockpiles.booked_tile(job.id) == NO_TILE
@@ -347,6 +364,12 @@ func report_unreachable(npc: Npc, tick: int) -> void:
 	match job.kind:
 		Job.KIND_HAUL:
 			var iid := job.carried_id if not job.carried_id.is_empty() else job.item_id
+			if job.phase == Job.PHASE_DELIVER:
+				# This NPC cannot reach that stockpile tile: never haul there again
+				# until terrain near it changes (no pick-up/drop loop).
+				var bt := stockpiles.booked_tile(job.id)
+				if bt != NO_TILE:
+					npc._blocked_drops[_idx(bt)] = true
 			_unassign(job)  # deletes the haul job, drops what it carried here
 			_set_item_unreachable(iid, tick)
 		Job.KIND_BUILD:
@@ -425,6 +448,8 @@ func load_snapshot(s: Dictionary) -> int:
 	_queued.clear()
 	_haul_retry.clear()
 	_item_unreachable.clear()
+	_region_cache.clear()
+	_wall_orders = 0
 	nav.invalidate_all()
 	_geom_version += 1
 	_rebuild_ground()
@@ -550,6 +575,7 @@ func _drive_build(job: Job, npc: Npc) -> Dictionary:
 					_reserve(nid, job)
 					it = inventory.get_item(nid)
 				var goals := _reach_positions(it.tile, -1)
+				job._fetch_tile = it.tile
 				if goals.is_empty():
 					_set_item_unreachable(it.id, _tick)
 					_release_item(job)
@@ -591,12 +617,27 @@ func _drive_build(job: Job, npc: Npc) -> Dictionary:
 				if not goals.has(npc.tile):
 					return {"action": ACTION_GOTO, "goals": goals}
 				if job.order_kind == DesignationMap.Kind.BUILD_WALL:
-					if _colony != null and _colony.npc_at(job.tile) != null:
+					var blocker: Npc = _colony.npc_at(job.tile) if _colony != null else null
+					if blocker != null:
 						job.wait_reason = REASON_BLOCKED
+						job._blocked_ticks += 1
+						if job._blocked_ticks >= STEP_ASIDE_AFTER_TICKS and blocker != npc \
+								and not blocker.is_moving() and blocker.command_target == NO_TILE:
+							job._blocked_ticks = 0
+							_colony.step_aside(blocker)
 						return {"action": ACTION_WAIT}
-					if inventory.ground_kg_at(job.tile) > 0.0:
-						job.wait_reason = REASON_ITEMS_IN_WAY  # a wall would bury them
-						return {"action": ACTION_WAIT}
+					job._blocked_ticks = 0
+					# A wall would bury ground stacks: carry them off the site first.
+					var junk := _ground_items_at(job.tile)
+					if not junk.is_empty():
+						var picked := _take_off_site(junk, npc)
+						if picked.is_empty():
+							job.wait_reason = REASON_ITEMS_IN_WAY  # being fetched by someone else
+							return {"action": ACTION_WAIT}
+						job.carried_id = picked
+						job.wait_reason = ""
+						job.phase = Job.PHASE_CLEAR
+						continue
 				job.wait_reason = ""
 				job.work_ticks += 1
 				var total := maxi(1, int(rec["work_ticks"]))
@@ -605,9 +646,85 @@ func _drive_build(job: Job, npc: Npc) -> Dictionary:
 					_complete_build(job)
 					return {"action": ACTION_NONE}
 				return {"action": ACTION_WORK}
+			Job.PHASE_CLEAR:
+				var carried := inventory.carried_by(npc.id)
+				if carried == null or carried.id != job.carried_id:
+					job.carried_id = ""
+					job.phase = Job.PHASE_WORK
+					continue
+				var spots := _clear_spots(job.tile)
+				if spots.is_empty() or spots.has(npc.tile):
+					inventory.drop(npc.id, npc.tile)  # npc.tile is never the wall tile
+					job.carried_id = ""
+					job.phase = Job.PHASE_WORK
+					continue
+				return {"action": ACTION_GOTO, "goals": spots}
 			_:
 				job.phase = Job.PHASE_FETCH
 	return {"action": ACTION_WAIT}
+
+
+## Picks up one stack lying on a wall site (npc stands in reach). Stacks a
+## working NPC is fetching are left alone; an unstarted haul job gives its
+## stack up. Returns the carried item id, or "".
+func _take_off_site(stacks: Array[ItemStack], npc: Npc) -> String:
+	for it in stacks:
+		var owner_id: String = _item_res.get(it.id, "")
+		if not owner_id.is_empty():
+			var oj: Job = _jobs.get(owner_id)
+			if oj != null and not oj.worker_id.is_empty():
+				continue
+			if oj != null:
+				if oj.kind == Job.KIND_HAUL:
+					_delete_job(oj)
+				else:
+					_release_item(oj)
+			_item_res.erase(it.id)
+		var r := inventory.pick_up(it.id, npc.id, Inventory.CARRY_CAPACITY_KG)
+		if r.ok:
+			return r.data["item_id"]
+	return ""
+
+
+## Standable spots with a solid floor near a wall site where a cleared stack
+## can be put down: not the site, not on any wall order.
+func _clear_spots(site: Vector2i) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for dy in range(-CLEAR_RADIUS, CLEAR_RADIUS + 1):
+		for dx in range(-CLEAR_RADIUS, CLEAR_RADIUS + 1):
+			if absi(dx) + absi(dy) > CLEAR_RADIUS or (dx == 0 and dy == 0):
+				continue
+			var p := site + Vector2i(dx, dy)
+			if not grid.is_solid_at(p + Vector2i.DOWN) or not nav.can_stand(p):
+				continue
+			if designations.get_kind(p) == DesignationMap.Kind.BUILD_WALL:
+				continue
+			out.append(p)
+	return out
+
+
+## Ground stacks on one tile, via the chunk index (no full item scan).
+func _ground_items_at(tile: Vector2i) -> Array[ItemStack]:
+	var out: Array[ItemStack] = []
+	var b: Variant = _ground_by_chunk.get(_chunk_of(tile))
+	if b == null:
+		return out
+	for iid: String in b:
+		var it := inventory.get_item(iid)
+		if it != null and it.holder == Inventory.Holder.GROUND and it.tile == tile:
+			out.append(it)
+	return out
+
+
+## True if an NPC with feet at f would have a wall order tile in its body.
+func body_on_wall_order(f: Vector2i) -> bool:
+	if _wall_orders <= 0:
+		return false
+	for k in nav.clearance:
+		var p := f + Vector2i(0, -k)
+		if grid.in_bounds(p) and designations.get_kind(p) == DesignationMap.Kind.BUILD_WALL:
+			return true
+	return false
 
 
 func _drive_haul(job: Job, npc: Npc) -> Dictionary:
@@ -623,6 +740,7 @@ func _drive_haul(job: Job, npc: Npc) -> Dictionary:
 					_unassign(job)
 					return {"action": ACTION_NONE}
 				var goals := _reach_positions(it.tile, -1)
+				job._fetch_tile = it.tile
 				if goals.is_empty():
 					_set_item_unreachable(it.id, _tick)
 					_unassign(job)
@@ -757,6 +875,11 @@ func _scan_bucket(ci: int, npc: Npc, tick: int, best: Array[Job], scores: Array[
 			continue
 		if region_only and not npc._region_reach.has(_idx(job.tile)):
 			continue
+		if job.kind == Job.KIND_HAUL:
+			var bt := stockpiles.booked_tile(job.id)
+			if bt != NO_TILE and (npc._blocked_drops.has(_idx(bt))
+					or (region_only and not npc._region_reach.has(_idx(bt)))):
+				continue  # its stockpile tile is out of this NPC's reach
 		var score := job.priority * 1000000 \
 				- (absi(job.tile.x - npc.tile.x) + absi(job.tile.y - npc.tile.y))
 		var n := best.size()
@@ -802,14 +925,15 @@ func _first_goals(job: Job, npc: Npc) -> Dictionary:
 			var it := _reserved_ground_item(job)
 			if it == null:
 				return {"reason": "item gone"}
+			var bt := stockpiles.booked_tile(job.id)
+			if bt != NO_TILE and npc._blocked_drops.has(_idx(bt)):
+				return {"reason": "stockpile out of reach"}
+			if npc._region_valid and (bt == NO_TILE or not npc._region_reach.has(_idx(bt))):
+				return {"reason": "stockpile out of reach"}
 			goals = _reach_positions(it.tile, -1)
 			if goals.is_empty():
 				_set_item_unreachable(it.id, _tick)
 				return {"reason": "item unreachable"}
-			if npc._region_valid:
-				var bt := stockpiles.booked_tile(job.id)
-				if bt == NO_TILE or not npc._region_reach.has(_idx(bt)):
-					return {"reason": "stockpile out of reach"}
 	if goals.is_empty():
 		return {"reason": REASON_UNREACHABLE}
 	return {"goals": goals, "item_id": item_id}
@@ -830,6 +954,8 @@ func _assign(job: Job, npc: Npc, item_id: String) -> void:
 				job.phase = Job.PHASE_WORK
 		Job.KIND_HAUL:
 			job.phase = Job.PHASE_FETCH
+	if not job.item_id.is_empty():
+		job._fetch_tile = inventory.get_item(job.item_id).tile
 	_refresh_open(job)
 	jobs_changed.emit()
 
@@ -853,23 +979,46 @@ func _find_material(job: Job, npc: Npc) -> String:
 	var near := npc.tile
 	var best := ""
 	var best_d := 0
-	for iid: String in _ground:
-		var it := inventory.get_item(iid)
-		if it == null or it.holder != Inventory.Holder.GROUND or not (it.material in mats):
-			continue
-		if int(_item_unreachable.get(iid, -1)) > _tick:
-			continue
-		if npc._region_valid and not npc._region_reach.has(_idx(it.tile)):
-			continue
-		var owner_id: String = _item_res.get(iid, "")
-		if not owner_id.is_empty():
-			var oj: Job = _jobs.get(owner_id)
-			if oj == null or oj.kind != Job.KIND_HAUL or not oj.worker_id.is_empty():
+	# Rings of chunks around the NPC (ground chunk index); stop once no unseen
+	# chunk can hold a nearer stack.
+	var c0 := Vector2i(clampi(near.x, 0, grid.width - 1), clampi(near.y, 0, grid.height - 1)) \
+			/ WorldGrid.CHUNK_SIZE
+	var cy_n := grid.chunks_y()
+	for r in maxi(_chunks_x, cy_n) + 1:
+		for dy in range(-r, r + 1):
+			var cy := c0.y + dy
+			if cy < 0 or cy >= cy_n:
 				continue
-		var d := absi(it.tile.x - near.x) + absi(it.tile.y - near.y)
-		if best.is_empty() or d < best_d:
-			best = iid
-			best_d = d
+			var edge := dy == -r or dy == r
+			var dx := -r
+			while dx <= r:
+				var cx := c0.x + dx
+				dx += 1 if edge or r == 0 else 2 * r
+				if cx < 0 or cx >= _chunks_x:
+					continue
+				var b: Variant = _ground_by_chunk.get(cy * _chunks_x + cx)
+				if b == null:
+					continue
+				for iid: String in b:
+					var it := inventory.get_item(iid)
+					if it == null or it.holder != Inventory.Holder.GROUND or not (it.material in mats):
+						continue
+					var d := absi(it.tile.x - near.x) + absi(it.tile.y - near.y)
+					if not best.is_empty() and d >= best_d:
+						continue
+					if int(_item_unreachable.get(iid, -1)) > _tick:
+						continue
+					if npc._region_valid and not npc._region_reach.has(_idx(it.tile)):
+						continue
+					var owner_id: String = _item_res.get(iid, "")
+					if not owner_id.is_empty():
+						var oj: Job = _jobs.get(owner_id)
+						if oj == null or oj.kind != Job.KIND_HAUL or not oj.worker_id.is_empty():
+							continue
+					best = iid
+					best_d = d
+		if not best.is_empty() and best_d <= r * WorldGrid.CHUNK_SIZE:
+			break
 	return best
 
 
@@ -917,8 +1066,8 @@ func _mark(job: Job, npc: Npc, tick: int) -> void:
 		return
 	job._marks[npc.id] = tick + UNREACHABLE_RETRY_TICKS
 	_add_marked(job)
-	if _all_blocked(job, tick):
-		_set_job_unreachable(job, tick)
+	# The job-level flag ("nobody can reach it") is set by _sweep_unreachable:
+	# checking all NPCs here for every failed candidate was too slow (QA-2).
 
 
 func _all_blocked(job: Job, tick: int) -> bool:
@@ -942,9 +1091,15 @@ func _set_job_unreachable(job: Job, tick: int, geometric: bool = false) -> void:
 	if not _jobs.has(job.id):
 		return
 	job._geo_unreachable = geometric
-	job.unreachable_until = tick + UNREACHABLE_RETRY_TICKS
 	job.wait_reason = REASON_UNREACHABLE
 	_add_marked(job)
+	if geometric:
+		# No work position at all: stays flagged until terrain near it changes
+		# (_on_tiles_changed -> _clear_unreachable), no periodic re-open.
+		job.unreachable_until = GEO_UNREACHABLE
+		_refresh_open(job)
+		return
+	job.unreachable_until = tick + UNREACHABLE_RETRY_TICKS
 	if not _reopen_at.has(job.unreachable_until):
 		_reopen_at[job.unreachable_until] = []
 	(_reopen_at[job.unreachable_until] as Array).append(job.id)
@@ -958,6 +1113,26 @@ func _clear_unreachable(job: Job) -> void:
 		if job.wait_reason == REASON_UNREACHABLE:
 			job.wait_reason = ""
 		_refresh_open(job)
+
+
+## Confined NPCs skip jobs outside their region without marking them, so a
+## few open jobs per tick are checked round-robin: if every eligible NPC is
+## blocked, the job is flagged unreachable (overlay) without any search.
+func _sweep_unreachable(tick: int) -> void:
+	if _jobs.is_empty():
+		return
+	var n := 0
+	while n < SWEEP_PER_TICK:
+		if _sweep_i >= _sweep_ids.size():
+			_sweep_ids = _jobs.keys()
+			_sweep_i = 0
+			if n > 0:
+				return  # at most one pass per tick
+		var job: Job = _jobs.get(_sweep_ids[_sweep_i])
+		_sweep_i += 1
+		n += 1
+		if job != null and job._open and job.kind != Job.KIND_HAUL and _all_blocked(job, tick):
+			_set_job_unreachable(job, tick)
 
 
 func _expire_unreachable(tick: int) -> void:
@@ -1022,6 +1197,26 @@ func _store_region(npc: Npc, region: PackedInt32Array) -> void:
 	npc._region_reach = reach
 	npc._region_bbox = Rect2i(lo, hi - lo + Vector2i.ONE)
 	npc._region_valid = true
+	_region_cache.append({"tiles": tiles, "reach": reach, "bbox": npc._region_bbox})
+	if _region_cache.size() > REGION_CACHE_SIZE:
+		_region_cache.pop_front()
+
+
+## An NPC standing inside a recorded region can reach at most that region
+## (reachability is directional, so it may be a superset): it adopts it
+## instead of searching. A later exhaustive failure records its exact region.
+func _adopt_cached_region(npc: Npc) -> void:
+	if npc._region_valid or _region_cache.is_empty():
+		return
+	var idx := _idx(npc.tile)
+	for i in range(_region_cache.size() - 1, -1, -1):
+		var e: Dictionary = _region_cache[i]
+		if (e["tiles"] as Dictionary).has(idx):
+			npc._region = e["tiles"]
+			npc._region_reach = e["reach"]
+			npc._region_bbox = e["bbox"]
+			npc._region_valid = true
+			return
 
 
 func _any_in_region(goals: Array[Vector2i], npc: Npc) -> bool:
@@ -1131,6 +1326,7 @@ func _delete_job(job: Job) -> void:
 	if job.kind != Job.KIND_HAUL and grid.in_bounds(job.tile) \
 			and _by_tile.get(_idx(job.tile), "") == job.id:
 		_by_tile.erase(_idx(job.tile))
+		_count_wall(job, -1)
 	_release_item(job)
 	stockpiles.release(job.id)
 	_site_kg.erase(job.id)
@@ -1171,7 +1367,8 @@ func _restore_job(job: Job, carried_claims: Dictionary) -> bool:
 				job.phase = Job.PHASE_WORK
 			Job.KIND_BUILD:
 				if not job.carried_id.is_empty():
-					job.phase = Job.PHASE_DELIVER
+					# A stack cleared off a wall site is never delivered to it.
+					job.phase = Job.PHASE_CLEAR if job.phase == Job.PHASE_CLEAR else Job.PHASE_DELIVER
 				elif job.phase != Job.PHASE_WORK:
 					job.phase = Job.PHASE_FETCH
 			Job.KIND_HAUL:
@@ -1183,6 +1380,7 @@ func _restore_job(job: Job, carried_claims: Dictionary) -> bool:
 		carried_claims[job.carried_id] = job.id
 	if job.kind != Job.KIND_HAUL:
 		_by_tile[_idx(job.tile)] = job.id
+		_count_wall(job, 1)
 	if not job.item_id.is_empty():
 		_item_res[job.item_id] = job.id
 	_refresh_open(job)
@@ -1221,6 +1419,13 @@ func _sync_all_designations() -> void:
 		_sync_tile(idx)
 
 
+## Wall orders change where NPCs prefer to stand: cached goals go stale.
+func _count_wall(job: Job, delta: int) -> void:
+	if job.order_kind == DesignationMap.Kind.BUILD_WALL and job.kind == Job.KIND_BUILD:
+		_wall_orders += delta
+		_geom_version += 1
+
+
 ## Makes the job on tile index match its order. True if anything changed.
 func _sync_tile(idx: int) -> bool:
 	var kind: int = designations.entries().get(idx, DesignationMap.Kind.NONE)
@@ -1244,6 +1449,7 @@ func _sync_tile(idx: int) -> bool:
 		job.priority = designations.get_priority(tile)
 		_jobs[job.id] = job
 		_by_tile[idx] = job.id
+		_count_wall(job, 1)
 		_refresh_open(job)
 		return true
 	var p := designations.get_priority(tile)
@@ -1262,6 +1468,9 @@ func _haul_scan(tick: int) -> void:
 		for iid: String in _haul_retry:
 			_queue_item(iid)
 		_haul_retry.clear()
+		for iid: String in _item_unreachable.keys():  # prune expired marks
+			if int(_item_unreachable[iid]) <= tick:
+				_item_unreachable.erase(iid)
 	if _haul_queue.is_empty():
 		return
 	# Free capacity per zone tile, computed once per scan (find_drop_tile
@@ -1339,9 +1548,36 @@ func _queue_all_loose() -> void:
 
 func _rebuild_ground() -> void:
 	_ground.clear()
+	_ground_by_chunk.clear()
 	for it in inventory.all_items():
 		if it.holder == Inventory.Holder.GROUND:
-			_ground[it.id] = true
+			_ground_set(it)
+
+
+## Ground index: item id -> chunk, chunk -> {item id: true}.
+func _ground_set(it: ItemStack) -> void:
+	var ci := _chunk_of(it.tile)
+	var old: Variant = _ground.get(it.id)
+	if old != null and int(old) == ci:
+		return
+	if old != null:
+		_ground_unset(it.id)
+	_ground[it.id] = ci
+	if not _ground_by_chunk.has(ci):
+		_ground_by_chunk[ci] = {}
+	(_ground_by_chunk[ci] as Dictionary)[it.id] = true
+
+
+func _ground_unset(iid: String) -> void:
+	var old: Variant = _ground.get(iid)
+	if old == null:
+		return
+	_ground.erase(iid)
+	var b: Variant = _ground_by_chunk.get(int(old))
+	if b != null:
+		(b as Dictionary).erase(iid)
+		if (b as Dictionary).is_empty():
+			_ground_by_chunk.erase(int(old))
 
 
 func _on_items_changed(item_id: String) -> void:
@@ -1351,10 +1587,10 @@ func _on_items_changed(item_id: String) -> void:
 		return
 	var it := inventory.get_item(item_id)
 	if it != null and it.holder == Inventory.Holder.GROUND:
-		_ground[item_id] = true
+		_ground_set(it)
 		_queue_item(item_id)
 	else:
-		_ground.erase(item_id)
+		_ground_unset(item_id)
 
 
 func _on_zones_changed(rect: Rect2i) -> void:
@@ -1362,16 +1598,45 @@ func _on_zones_changed(rect: Rect2i) -> void:
 		_queue_item(iid)
 	_haul_retry.clear()
 	# Items on tiles that stopped being stockpile are loose again.
-	for iid: String in _ground:
-		var it := inventory.get_item(iid)
-		if it != null and rect.has_point(it.tile):
-			_queue_item(iid)
+	for it in _ground_items_in(rect):
+		_queue_item(it.id)
+
+
+## Ground stacks inside rect (chunk index; no full item scan).
+func _ground_items_in(rect: Rect2i) -> Array[ItemStack]:
+	var out: Array[ItemStack] = []
+	for c in grid.chunks_in_rect(rect):
+		var b: Variant = _ground_by_chunk.get(grid.chunk_index(c))
+		if b == null:
+			continue
+		for iid: String in (b as Dictionary).keys():
+			var it := inventory.get_item(iid)
+			if it != null and it.holder == Inventory.Holder.GROUND and rect.has_point(it.tile):
+				out.append(it)
+	return out
+
+
+## Item gravity: ground stacks in or above rect whose tile below is no
+## longer solid fall to the first tile at/below with a solid tile beneath
+## (Inventory.relocate_ground keeps the id, so reservations stay valid and
+## the job re-routes via needs_new_route).
+func _drop_unsupported_items(rect: Rect2i) -> void:
+	var cols := Rect2i(rect.position.x, 0, rect.size.x, rect.end.y).intersection(grid.bounds())
+	if not cols.has_area() or _ground.is_empty():
+		return
+	for it in _ground_items_in(cols):
+		if grid.is_solid_at(it.tile + Vector2i.DOWN) and not grid.is_solid_at(it.tile):
+			continue
+		var land := _landing(it.tile)
+		if land != it.tile:
+			inventory.relocate_ground(it.id, land)
 
 
 # --- Geometry ----------------------------------------------------------
 
 func _on_tiles_changed(rect: Rect2i) -> void:
 	_geom_version += 1
+	_drop_unsupported_items(rect)
 	var area := rect.grow(UNREACHABLE_AREA_MARGIN)
 	for c in grid.chunks_in_rect(area):
 		var ci := grid.chunk_index(c)
@@ -1389,16 +1654,25 @@ func _on_tiles_changed(rect: Rect2i) -> void:
 		if d.is_empty():
 			_marked_chunks.erase(ci)
 	if not _item_unreachable.is_empty():
-		for iid: String in _item_unreachable.keys():
-			var it := inventory.get_item(iid)
-			if it == null or int(_item_unreachable[iid]) <= _tick or area.has_point(it.tile):
-				_item_unreachable.erase(iid)
+		for it in _ground_items_in(area):
+			_item_unreachable.erase(it.id)
 	var colony := _colony
 	if colony != null:
 		var m := nav.clearance + NavGrid.MAX_DROP + 2
+		for i in range(_region_cache.size() - 1, -1, -1):
+			if ((_region_cache[i] as Dictionary)["bbox"] as Rect2i).grow(m).intersects(rect):
+				_region_cache.remove_at(i)
+		var drop_area := rect.grow(DROP_BLOCK_MARGIN)
 		for npc: Npc in colony._npcs.values():
 			if npc._region_valid and npc._region_bbox.grow(m).intersects(rect):
 				npc._region_valid = false
+			if not npc._blocked_drops.is_empty():
+				if drop_area.has_point(npc.tile):
+					npc._blocked_drops.clear()  # its own surroundings changed: try again
+					continue
+				for idx: int in npc._blocked_drops.keys():
+					if drop_area.has_point(_tile_of(idx)):
+						npc._blocked_drops.erase(idx)
 
 
 ## Cached work positions of a dig/build job.
@@ -1420,14 +1694,19 @@ func _reach_positions(t: Vector2i, mode: int) -> Array[Vector2i]:
 				or grid.is_passable(t + Vector2i.LEFT) or grid.is_passable(t + Vector2i.RIGHT)):
 			return out
 	var c := nav.clearance
+	var on_walls: Array[Vector2i] = []
 	for fy in range(t.y - 1, t.y + c + 1):
 		for fx in range(t.x - 1, t.x + 2):
 			if mode == DesignationMap.Kind.BUILD_WALL and fx == t.x and t.y <= fy and t.y >= fy - (c - 1):
 				continue
 			var f := Vector2i(fx, fy)
 			if nav.can_stand(f):
-				out.append(f)
-	return out
+				# Prefer spots whose body keeps clear of other wall orders (QA-3).
+				if body_on_wall_order(f):
+					on_walls.append(f)
+				else:
+					out.append(f)
+	return out if not out.is_empty() else on_walls
 
 
 func _dig_ticks(t: Vector2i) -> int:

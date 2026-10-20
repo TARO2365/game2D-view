@@ -219,9 +219,6 @@ func test_stockpile_removed_and_floor_dug_mid_haul() -> void:
 ## Confirmed failing without pending() on 2026-10-20 (wall never built in
 ## 3000 ticks; NPC idle at (11, 9) holding job:1 "items in the way").
 func test_wall_items_in_way_single_npc_no_deadlock() -> void:
-	pending("BUG QA-1: single builder waits forever on 'items in the way' (holds the job, never hauls them)")
-	return
-	@warning_ignore("unreachable_code")
 	_setup(Vector2i(40, 30))
 	sp.designate(Rect2i(30, 9, 2, 1))
 	var n := col.spawn_npc(Vector2i(5, 9))
@@ -251,9 +248,6 @@ func test_wall_blocked_by_idle_npc_resolves_without_player() -> void:
 ## ticks npc:1 at (13, 9) holds job:1 "Build wall (12, 9) - blocked by NPC" and
 ## npc:2 at (12, 9) holds job:2 "Build wall (13, 9) - blocked by NPC".
 func test_two_builders_on_each_others_wall_tiles_no_deadlock() -> void:
-	pending("BUG QA-3: two wall builders block each other forever (each stands on the other's wall tile)")
-	return
-	@warning_ignore("unreachable_code")
 	_setup(Vector2i(40, 30))
 	inv.spawn_ground(&"rock", 50.0, Vector2i(21, 9))
 	inv.spawn_ground(&"rock", 50.0, Vector2i(4, 9))
@@ -272,9 +266,6 @@ func test_two_builders_on_each_others_wall_tiles_no_deadlock() -> void:
 ## BUG QA-4: confirmed failing without pending() on 2026-10-20: 20 pick-ups in
 ## 3000 ticks, the stack is dropped back next to where it lay each time.
 func test_unreachable_stockpile_no_pickup_livelock() -> void:
-	pending("BUG QA-4: haul to an unreachable stockpile repeats pick-up/drop every ~150 ticks forever")
-	return
-	@warning_ignore("unreachable_code")
 	_setup(Vector2i(40, 30))
 	g.apply_edit(Rect2i(30, 6, 1, 4), WorldGrid.Edit.BUILD_WALL)   # pillar rows 6..9
 	assert_true(sp.designate(Rect2i(30, 5, 1, 1)).ok)

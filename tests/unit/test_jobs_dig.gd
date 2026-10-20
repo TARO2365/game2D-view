@@ -243,3 +243,17 @@ func test_work_toggle_filters_dig() -> void:
 	assert_eq(g.get_tile(Vector2i(7, 10)), TileRegistry.DIRT)
 	col.set_work_enabled(n.id, &"dig", true)
 	assert_true(_run(100, func() -> bool: return g.get_tile(Vector2i(7, 10)) == TileRegistry.AIR))
+
+
+func test_buried_order_stays_unreachable_without_flicker() -> void:
+	col.spawn_npc(Vector2i(5, 9))
+	des.designate(Rect2i(7, 15, 1, 1), K.DIG)  # touches no air
+	_run(2)
+	var flagged := [0]
+	_run(400, func() -> bool:
+		if jobs.is_unreachable(Vector2i(7, 15)):
+			flagged[0] += 1
+		return false)
+	assert_eq(flagged[0], 400, "flagged on every tick until terrain changes")
+	g.apply_edit(Rect2i(7, 10, 1, 5), WorldGrid.Edit.DIG)  # shaft down to it
+	assert_false(jobs.is_unreachable(Vector2i(7, 15)))
