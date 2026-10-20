@@ -42,6 +42,7 @@ const STEP_ASIDE_AFTER_TICKS := 20      # PLACEHOLDER: wall blocked this long ->
 const CLEAR_RADIUS := 4                 # PLACEHOLDER: where stacks cleared off a wall site go
 const DROP_BLOCK_MARGIN := 8            # PLACEHOLDER: terrain change this close re-allows a stockpile tile
 const GEO_UNREACHABLE := 1 << 60        # "until terrain changes" (order has no work position)
+const LADDER_REFUND_MATERIAL := &"dirt"  # PLACEHOLDER: ladder material is not tracked per tile
 const ID_CATEGORY := &"job"
 const NO_TILE := Vector2i(-1, -1)
 const KG_EPSILON := 0.001
@@ -70,8 +71,16 @@ var _colony: Colony:
 	get:
 		return _colony_ref.get_ref() as Colony if _colony_ref != null else null
 
+## M3 (optional: null in M2-only setups and tests).
+var buildings: Buildings = null
+var crates: CrateStorage = null
+var build_orders: BuildOrders = null
+
 var _jobs: Dictionary = {}           # job id -> Job (creation order)
-var _by_tile: Dictionary = {}        # tile index -> job id (dig / build)
+var _by_tile: Dictionary = {}        # tile index -> job id (dig / build / deconstruct)
+var _by_order: Dictionary = {}       # build order id -> building job id
+var _decon_by_building: Dictionary = {}  # building id -> deconstruct job id
+var _job_tiles: Dictionary = {}      # building deconstruct job id -> [designated tile indices]
 var _item_res: Dictionary = {}       # reserved ground item id -> job id
 var _site_kg: Dictionary = {}        # build job id -> kg delivered (mirror of Inventory)
 var _ground: Dictionary = {}         # ground item id -> chunk index (cache from items_changed)
@@ -96,22 +105,36 @@ var _reconcile_pending: bool = false
 var _chunks_x: int = 1
 
 
+## The M3 parts (buildings, crates, build orders) are optional so M2 setups
+## keep working; WorldSession passes all of them.
 func _init(world_grid: WorldGrid, designation_map: DesignationMap, inv: Inventory,
-		zones: StockpileZones, nav_grid: NavGrid, id_alloc: StableIdAllocator) -> void:
+		zones: StockpileZones, nav_grid: NavGrid, id_alloc: StableIdAllocator,
+		world_buildings: Buildings = null, crate_storage: CrateStorage = null,
+		orders: BuildOrders = null) -> void:
 	grid = world_grid
 	designations = designation_map
 	inventory = inv
 	stockpiles = zones
 	nav = nav_grid
 	ids = id_alloc
+	buildings = world_buildings
+	crates = crate_storage
+	build_orders = orders
 	_chunks_x = grid.chunks_x()
 	_prio_count.resize(DesignationMap.MAX_PRIORITY + 1)
 	designations.designations_changed.connect(_on_designations_changed)
 	grid.tiles_changed.connect(_on_tiles_changed)
 	inventory.items_changed.connect(_on_items_changed)
 	stockpiles.zones_changed.connect(_on_zones_changed)
+	if buildings != null:
+		buildings.building_lost.connect(_on_building_lost)
+	if crates != null:
+		crates.crates_changed.connect(_on_crates_changed)
+	if build_orders != null:
+		build_orders.orders_changed.connect(_on_orders_changed)
 	_rebuild_ground()
 	_sync_all_designations()
+	_sync_orders()
 
 
 ## Called by Colony's constructor (Colony is created after JobManager, §7).
@@ -147,11 +170,17 @@ func all_jobs() -> Array[Job]:
 	return out
 
 
-## Job on an order tile (dig / build), or null.
+## Job on an order tile (dig / build / deconstruct, or a building order's
+## footprint), or null.
 func job_at(tile: Vector2i) -> Job:
 	if not grid.in_bounds(tile):
 		return null
-	return _jobs.get(_by_tile.get(_idx(tile), ""))
+	var j: Job = _jobs.get(_by_tile.get(_idx(tile), ""))
+	if j == null and build_orders != null:
+		var o := build_orders.order_at(tile)
+		if not o.is_empty():
+			j = _jobs.get(_by_order.get(o["id"], ""))
+	return j
 
 
 func describe_job(job_id: String) -> String:
@@ -168,6 +197,15 @@ func describe_job(job_id: String) -> String:
 		Job.KIND_HAUL:
 			var it := inventory.get_item(job.carried_id if not job.carried_id.is_empty() else job.item_id)
 			text = "Haul %s %.0f kg" % [it.material, it.kg] if it != null else "Haul"
+		Job.KIND_BUILDING:
+			text = "Build %s (%d, %d)" % [job.building_key, job.tile.x, job.tile.y]
+		Job.KIND_DECONSTRUCT:
+			var what := "wall"
+			if not job.order_id.is_empty() and buildings != null:
+				what = String(buildings.get_building(job.order_id).get("key", "building"))
+			elif grid.is_ladder(job.tile):
+				what = "ladder"
+			text = "Deconstruct %s (%d, %d)" % [what, job.tile.x, job.tile.y]
 	if not job.wait_reason.is_empty():
 		text += " - " + job.wait_reason
 	return text
@@ -193,8 +231,9 @@ func check_invariants() -> Array[String]:
 			claimed[iid] = job.id
 		if not job.item_id.is_empty():
 			var it := inventory.get_item(job.item_id)
-			if it == null or it.holder != Inventory.Holder.GROUND:
-				errors.append("%s reserves %s which is not on the ground" % [job.id, job.item_id])
+			if it == null or not (it.holder == Inventory.Holder.GROUND
+					or (it.holder == Inventory.Holder.CRATE and job.needs_material())):
+				errors.append("%s reserves %s which is not on the ground / in a crate" % [job.id, job.item_id])
 			if _item_res.get(job.item_id, "") != job.id:
 				errors.append("%s item %s missing from reservation table" % [job.id, job.item_id])
 		if not job.carried_id.is_empty():
@@ -210,15 +249,35 @@ func check_invariants() -> Array[String]:
 				errors.append("%s worker %s works on '%s'" % [job.id, job.worker_id, npc.job_id])
 		if job.is_done():
 			errors.append("%s is done but still listed" % job.id)
-		if job.kind != Job.KIND_HAUL:
-			if designations.get_kind(job.tile) != job.order_kind:
-				errors.append("%s has no matching order at %s" % [job.id, job.tile])
-			if _by_tile.get(_idx(job.tile), "") != job.id:
-				errors.append("%s missing from tile index" % job.id)
-			if job.kind == Job.KIND_BUILD and absf(_site(job) - inventory.site_kg(job.id)) > KG_EPSILON:
-				errors.append("%s site kg mirror %.3f != %.3f" % [job.id, _site(job), inventory.site_kg(job.id)])
-		elif job.item_id.is_empty() and job.carried_id.is_empty():
-			errors.append("haul %s has no item" % job.id)
+		match job.kind:
+			Job.KIND_HAUL:
+				if job.item_id.is_empty() and job.carried_id.is_empty():
+					errors.append("haul %s has no item" % job.id)
+				if crates != null and not crates.booked_crate(job.id).is_empty() \
+						and stockpiles.booked_tile(job.id) != NO_TILE:
+					errors.append("haul %s holds a crate and a zone booking" % job.id)
+			Job.KIND_BUILDING:
+				if build_orders == null or build_orders.get_order(job.order_id).is_empty():
+					errors.append("%s: building order %s is gone" % [job.id, job.order_id])
+				elif _by_order.get(job.order_id, "") != job.id:
+					errors.append("%s missing from order index" % job.id)
+			Job.KIND_DECONSTRUCT:
+				if designations.get_kind(job.tile) != DesignationMap.Kind.DECONSTRUCT:
+					errors.append("%s has no deconstruct order at %s" % [job.id, job.tile])
+				if not job.order_id.is_empty():
+					if buildings == null or buildings.get_building(job.order_id).is_empty():
+						errors.append("%s: building %s is gone" % [job.id, job.order_id])
+					elif _decon_by_building.get(job.order_id, "") != job.id:
+						errors.append("%s missing from building index" % job.id)
+				if _by_tile.get(_idx(job.tile), "") != job.id:
+					errors.append("%s missing from tile index" % job.id)
+			_:
+				if designations.get_kind(job.tile) != job.order_kind:
+					errors.append("%s has no matching order at %s" % [job.id, job.tile])
+				if _by_tile.get(_idx(job.tile), "") != job.id:
+					errors.append("%s missing from tile index" % job.id)
+		if job.needs_material() and absf(_site(job) - inventory.site_kg(job.id)) > KG_EPSILON:
+			errors.append("%s site kg mirror %.3f != %.3f" % [job.id, _site(job), inventory.site_kg(job.id)])
 		var should_open := job.worker_id.is_empty() and job.unreachable_until < 0
 		if job._open != should_open:
 			errors.append("%s open-bucket state %s, expected %s" % [job.id, job._open, should_open])
@@ -249,13 +308,29 @@ func check_invariants() -> Array[String]:
 		var hj: Job = _jobs.get(b["job_id"])
 		if hj == null or hj.kind != Job.KIND_HAUL:
 			errors.append("booking by %s which is not a haul job" % b["job_id"])
+	if crates != null:
+		for b: Dictionary in crates.to_snapshot()["bookings"]:
+			var cj: Job = _jobs.get(b["job_id"])
+			if cj == null or cj.kind != Job.KIND_HAUL:
+				errors.append("crate booking by %s which is not a haul job" % b["job_id"])
+	if build_orders != null:
+		for o in build_orders.orders():
+			var bj: Job = _jobs.get(_by_order.get(o["id"], ""))
+			if bj == null or bj.order_id != o["id"]:
+				errors.append("building order %s has no job" % o["id"])
+	var crate_set := {}
+	if crates != null:
+		for cid in crates.crate_ids():
+			crate_set[cid] = true
 	for it in inventory.all_items():
 		if it.holder == Inventory.Holder.SITE:
 			var sj: Job = _jobs.get(it.holder_id)
-			if sj == null or sj.kind != Job.KIND_BUILD:
+			if sj == null or not sj.needs_material():
 				errors.append("site item %s belongs to missing build job %s" % [it.id, it.holder_id])
 		elif it.holder == Inventory.Holder.NPC and colony != null and colony.get_npc(it.holder_id) == null:
 			errors.append("item %s held by missing NPC %s" % [it.id, it.holder_id])
+		elif it.holder == Inventory.Holder.CRATE and crates != null and not crate_set.has(it.holder_id):
+			errors.append("item %s in missing crate %s" % [it.id, it.holder_id])
 	return errors
 
 
@@ -323,8 +398,10 @@ func drive(npc: Npc, tick: int) -> Dictionary:
 	match job.kind:
 		Job.KIND_DIG:
 			return _drive_dig(job, npc)
-		Job.KIND_BUILD:
+		Job.KIND_BUILD, Job.KIND_BUILDING:
 			return _drive_build(job, npc)
+		Job.KIND_DECONSTRUCT:
+			return _drive_deconstruct(job, npc)
 		Job.KIND_HAUL:
 			return _drive_haul(job, npc)
 	return {"action": ACTION_NONE}
@@ -342,14 +419,14 @@ func needs_new_route(npc: Npc) -> bool:
 	var dest: Vector2i = npc._path[npc._path.size() - 1]
 	if job.phase == Job.PHASE_FETCH and not job.item_id.is_empty():
 		var it := inventory.get_item(job.item_id)
-		if it == null or it.holder != Inventory.Holder.GROUND or it.tile != job._fetch_tile:
-			return true  # the stack moved (fell) or is gone
+		if it == null or _item_pos(it) != job._fetch_tile:
+			return true  # the stack moved (fell, crate emptied) or is gone
 	match job.kind:
 		Job.KIND_HAUL:
-			return job.phase == Job.PHASE_DELIVER and stockpiles.booked_tile(job.id) == NO_TILE
-		Job.KIND_DIG:
+			return job.phase == Job.PHASE_DELIVER and _haul_target(job) == NO_TILE
+		Job.KIND_DIG, Job.KIND_DECONSTRUCT:
 			return not _work_goals(job).has(dest)
-		Job.KIND_BUILD:
+		Job.KIND_BUILD, Job.KIND_BUILDING:
 			if job.phase == Job.PHASE_DELIVER or job.phase == Job.PHASE_WORK:
 				return not _work_goals(job).has(dest)
 	return false
@@ -367,12 +444,12 @@ func report_unreachable(npc: Npc, tick: int) -> void:
 			if job.phase == Job.PHASE_DELIVER:
 				# This NPC cannot reach that stockpile tile: never haul there again
 				# until terrain near it changes (no pick-up/drop loop).
-				var bt := stockpiles.booked_tile(job.id)
+				var bt := _haul_target(job)
 				if bt != NO_TILE:
 					npc._blocked_drops[_idx(bt)] = true
 			_unassign(job)  # deletes the haul job, drops what it carried here
 			_set_item_unreachable(iid, tick)
-		Job.KIND_BUILD:
+		Job.KIND_BUILD, Job.KIND_BUILDING:
 			if job.phase == Job.PHASE_FETCH and not job.item_id.is_empty():
 				# The material is out of reach, not the site: try another stack.
 				_set_item_unreachable(job.item_id, tick)
@@ -438,6 +515,9 @@ func to_snapshot() -> Dictionary:
 func load_snapshot(s: Dictionary) -> int:
 	_jobs.clear()
 	_by_tile.clear()
+	_by_order.clear()
+	_decon_by_building.clear()
+	_job_tiles.clear()
 	_item_res.clear()
 	_site_kg.clear()
 	_open_chunks.clear()
@@ -472,19 +552,27 @@ func load_snapshot(s: Dictionary) -> int:
 	for it in inventory.all_items():
 		if it.holder == Inventory.Holder.SITE:
 			var sj: Job = _jobs.get(it.holder_id)
-			if sj == null or sj.kind != Job.KIND_BUILD:
+			if sj == null or not sj.needs_material():
 				orphan_sites[it.holder_id] = true
 			else:
 				_site_kg[sj.id] = float(_site_kg.get(sj.id, 0.0)) + it.kg
 	for jid: String in orphan_sites:
 		var t: Vector2i = dropped_tiles.get(jid, _fallback_tile())
 		inventory.return_site_to_ground(jid, _landing(t))
-	# Bookings must belong to a live haul job.
+	# Bookings must belong to a live haul job; a haul holds at most one.
 	for b: Dictionary in stockpiles.to_snapshot()["bookings"]:
 		var hj: Job = _jobs.get(b["job_id"])
 		if hj == null or hj.kind != Job.KIND_HAUL:
 			stockpiles.release(b["job_id"])
+	if crates != null:
+		for b: Dictionary in crates.to_snapshot()["bookings"]:
+			var cj: Job = _jobs.get(b["job_id"])
+			if cj == null or cj.kind != Job.KIND_HAUL:
+				crates.release(b["job_id"])
+			else:
+				stockpiles.release(cj.id)  # the crate booking wins
 	_sync_all_designations()
+	_sync_orders()
 	_reconcile_pending = true
 	if _colony != null:
 		revalidate()
@@ -553,7 +641,10 @@ func _drive_dig(job: Job, npc: Npc) -> Dictionary:
 
 
 func _drive_build(job: Job, npc: Npc) -> Dictionary:
-	var rec := ConstructionDefs.recipe(job.order_kind)
+	var rec := _recipe(job)
+	if rec.is_empty():
+		_cancel(job)
+		return {"action": ACTION_NONE}
 	var need := float(rec["kg"])
 	for _step in 4:  # chain phase changes within one tick (bounded)
 		match job.phase:
@@ -565,7 +656,7 @@ func _drive_build(job: Job, npc: Npc) -> Dictionary:
 					job.phase = Job.PHASE_WORK
 					continue
 				job.phase = Job.PHASE_FETCH
-				var it := _reserved_ground_item(job)
+				var it := _reserved_item(job)
 				if it == null:
 					_release_item(job)
 					var nid := _find_material(job, npc)
@@ -574,8 +665,9 @@ func _drive_build(job: Job, npc: Npc) -> Dictionary:
 						return {"action": ACTION_NONE}
 					_reserve(nid, job)
 					it = inventory.get_item(nid)
-				var goals := _reach_positions(it.tile, -1)
-				job._fetch_tile = it.tile
+				var at := _item_pos(it)
+				var goals := _reach_positions(at, -1)
+				job._fetch_tile = at
 				if goals.is_empty():
 					_set_item_unreachable(it.id, _tick)
 					_release_item(job)
@@ -583,7 +675,11 @@ func _drive_build(job: Job, npc: Npc) -> Dictionary:
 				if not goals.has(npc.tile):
 					return {"action": ACTION_GOTO, "goals": goals}
 				var want := minf(need - _site(job), Inventory.CARRY_CAPACITY_KG)
-				var r := inventory.pick_up(it.id, npc.id, want)
+				var r: CommandResult
+				if it.holder == Inventory.Holder.CRATE:
+					r = inventory.take_from_crate(it.id, npc.id, want)
+				else:
+					r = inventory.pick_up(it.id, npc.id, want)
 				_release_item(job)
 				if not r.ok:
 					return {"action": ACTION_WAIT}
@@ -616,17 +712,29 @@ func _drive_build(job: Job, npc: Npc) -> Dictionary:
 					return {"action": ACTION_NONE}
 				if not goals.has(npc.tile):
 					return {"action": ACTION_GOTO, "goals": goals}
-				if job.order_kind == DesignationMap.Kind.BUILD_WALL:
-					var blocker: Npc = _colony.npc_at(job.tile) if _colony != null else null
+				var block_tiles := _blocking_tiles(job)
+				if not block_tiles.is_empty():
+					var blocker: Npc = null
+					if _colony != null:
+						for bt in block_tiles:
+							blocker = _colony.npc_at(bt)
+							if blocker != null:
+								break
 					if blocker != null:
 						job.wait_reason = REASON_BLOCKED
 						job._blocked_ticks += 1
 						if job._blocked_ticks >= STEP_ASIDE_AFTER_TICKS and blocker != npc \
 								and not blocker.is_moving() and blocker.command_target == NO_TILE:
 							job._blocked_ticks = 0
-							_colony.step_aside(blocker)
+							var lo := block_tiles[0]
+							var hi := block_tiles[0]
+							for bt in block_tiles:
+								lo = Vector2i(mini(lo.x, bt.x), mini(lo.y, bt.y))
+								hi = Vector2i(maxi(hi.x, bt.x), maxi(hi.y, bt.y))
+							_colony.step_aside(blocker, Rect2i(lo, hi - lo + Vector2i.ONE))
 						return {"action": ACTION_WAIT}
 					job._blocked_ticks = 0
+				if job.order_kind == DesignationMap.Kind.BUILD_WALL:
 					# A wall would bury ground stacks: carry them off the site first.
 					var junk := _ground_items_at(job.tile)
 					if not junk.is_empty():
@@ -754,9 +862,12 @@ func _drive_haul(job: Job, npc: Npc) -> Dictionary:
 				_release_item(job)
 				job.carried_id = r.data["item_id"]
 				var picked := inventory.get_item(job.carried_id)
+				var bc := _booked_crate(job)
 				var bt := stockpiles.booked_tile(job.id)
-				if bt != NO_TILE:
-					stockpiles.book(bt, picked.kg, job.id)  # resize; keeps old booking on failure
+				if not bc.is_empty():
+					crates.book(bc, picked.kg, job.id)  # resize; keeps old booking on failure
+				elif bt != NO_TILE:
+					stockpiles.book(bt, picked.kg, job.id)
 				job.phase = Job.PHASE_DELIVER
 			Job.PHASE_DELIVER:
 				var carried := inventory.carried_by(npc.id)
@@ -764,20 +875,26 @@ func _drive_haul(job: Job, npc: Npc) -> Dictionary:
 					job.carried_id = ""
 					_unassign(job)
 					return {"action": ACTION_NONE}
-				var t := stockpiles.booked_tile(job.id)
+				var t := _haul_target(job)
 				if t == NO_TILE:
-					t = stockpiles.find_drop_tile(carried.kg, npc.tile)
-					if t == NO_TILE or not stockpiles.book(t, carried.kg, job.id).ok:
+					# Booking lost (crate removed, zone gone): crate first, then a zone tile.
+					if not _book_storage(job, carried.material, carried.kg, npc.tile, null):
 						_finish_haul_here(job, npc)
 						return {"action": ACTION_NONE}
+					t = _haul_target(job)
 				var goals := _reach_positions(t, -1)
 				if goals.is_empty():
-					stockpiles.release(job.id)
+					_release_storage(job)
 					_finish_haul_here(job, npc)
 					return {"action": ACTION_NONE}
 				if not goals.has(npc.tile):
 					return {"action": ACTION_GOTO, "goals": goals}
-				_put_down(npc.id, t)
+				var crate_id := _booked_crate(job)
+				if not crate_id.is_empty():
+					inventory.store_in_crate(npc.id, crate_id)
+					crates.release(job.id)
+				else:
+					_put_down(npc.id, t)
 				job.carried_id = ""
 				_remove_finished(job)
 				return {"action": ACTION_NONE}
@@ -803,6 +920,9 @@ func _complete_dig(job: Job) -> void:
 
 
 func _complete_build(job: Job) -> void:
+	if job.kind == Job.KIND_BUILDING:
+		_complete_building(job)
+		return
 	var wall := job.order_kind == DesignationMap.Kind.BUILD_WALL
 	var ok := grid.can_place_structure(job.tile, WorldGrid.Structure.LADDER)
 	if wall:
@@ -873,30 +993,60 @@ func _drop_ok_for(t: Vector2i, npc: Npc) -> bool:
 	return not npc._region_valid or npc._region_reach.has(i)
 
 
-## Any zone tile npc could deliver to (capacity not checked).
+## Any crate or zone tile npc could deliver to (capacity not checked).
 func _has_usable_zone(npc: Npc) -> bool:
 	if npc._blocked_drops.is_empty() and not npc._region_valid:
-		return stockpiles.count() > 0
+		return stockpiles.count() > 0 or (crates != null and not crates.crate_ids().is_empty())
+	if crates != null:
+		for cid in crates.crate_ids():
+			if _drop_ok_for(_crate_tile(cid), npc):
+				return true
 	for t in stockpiles.tiles():
 		if _drop_ok_for(t, npc):
 			return true
 	return false
 
 
-## QA-8: moves a haul job's booking to the nearest zone tile (Manhattan from
-## the stack) that npc can deliver to and that has room. False if none.
+## QA-8: moves a haul job's booking to the nearest crate (preferred, D-021)
+## or zone tile that npc can deliver to and that has room. False if none.
 ## Each failed delivery blocks one more tile for that NPC (or records its
 ## confined region), so re-booking cannot loop forever.
 func _rebook_for(job: Job, it: ItemStack, npc: Npc) -> bool:
 	var kg := minf(it.kg, Inventory.CARRY_CAPACITY_KG)
-	var old := stockpiles.booked_tile(job.id)
+	return _book_storage(job, it.material, kg, it.tile, npc, _haul_target(job))
+
+
+## Books storage for a haul job: the nearest accepting crate with room,
+## else the nearest zone tile with room (Manhattan from near). With npc, only
+## targets that NPC can deliver to; `skip` (a tile) is never chosen. The
+## job's other booking kind is released. False if nothing fits.
+func _book_storage(job: Job, material: StringName, kg: float, near: Vector2i, npc: Npc,
+		skip: Vector2i = NO_TILE) -> bool:
+	if crates != null:
+		var best := ""
+		var best_d := 0
+		for cid in crates.crate_ids():
+			var ct := _crate_tile(cid)
+			if ct == skip or (npc != null and not _drop_ok_for(ct, npc)):
+				continue
+			if not crates.accepts(cid, material) or crates.free_capacity(cid) + KG_EPSILON < kg:
+				continue
+			var d := absi(ct.x - near.x) + absi(ct.y - near.y)
+			if best.is_empty() or d < best_d:
+				best = cid
+				best_d = d
+		if not best.is_empty() and crates.book(best, kg, job.id).ok:
+			stockpiles.release(job.id)
+			return true
 	var cands: Array = []
 	for t in stockpiles.tiles():
-		if t != old and _drop_ok_for(t, npc):
-			cands.append([absi(t.x - it.tile.x) + absi(t.y - it.tile.y), t])
+		if t != skip and (npc == null or _drop_ok_for(t, npc)):
+			cands.append([absi(t.x - near.x) + absi(t.y - near.y), t])
 	cands.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
 	for c: Array in cands:
 		if stockpiles.free_capacity(c[1]) + KG_EPSILON >= kg and stockpiles.book(c[1], kg, job.id).ok:
+			if crates != null:
+				crates.release(job.id)
 			return true
 	return false
 
@@ -907,14 +1057,14 @@ func _scan_bucket(ci: int, npc: Npc, tick: int, best: Array[Job], scores: Array[
 	if bucket == null:
 		return
 	for job: Job in (bucket as Dictionary).values():
-		if not npc.work_enabled.get(job.kind, false) or npc.is_ignoring(job.id, tick):
+		if not npc.work_enabled.get(job.work_type(), false) or npc.is_ignoring(job.id, tick):
 			continue
 		if int(job._marks.get(npc.id, -1)) > tick:
 			continue
 		if region_only and not npc._region_reach.has(_idx(job.tile)):
 			continue
 		if job.kind == Job.KIND_HAUL and not zone_ok:
-			var bt := stockpiles.booked_tile(job.id)
+			var bt := _haul_target(job)
 			if bt == NO_TILE or not _drop_ok_for(bt, npc):
 				continue  # no zone tile this NPC could deliver to at all
 		var score := job.priority * 1000000 \
@@ -939,22 +1089,25 @@ func _first_goals(job: Job, npc: Npc) -> Dictionary:
 	var goals: Array[Vector2i] = []
 	var item_id := ""
 	match job.kind:
-		Job.KIND_DIG:
+		Job.KIND_DIG, Job.KIND_DECONSTRUCT:
 			goals = _work_goals(job)
-		Job.KIND_BUILD:
+		Job.KIND_BUILD, Job.KIND_BUILDING:
 			var work := _work_goals(job)
 			if work.is_empty():
 				return {"reason": REASON_UNREACHABLE}
 			if npc._region_valid and not _any_in_region(work, npc):
 				return {"reason": "site out of reach"}
-			var need := float(ConstructionDefs.recipe(job.order_kind)["kg"])
+			var rec := _recipe(job)
+			if rec.is_empty():
+				return {"reason": "unknown building"}
+			var need := float(rec["kg"])
 			if _site(job) + KG_EPSILON >= need:
 				goals = work
 			else:
 				item_id = _find_material(job, npc)
 				if item_id.is_empty():
 					return {"reason": "no material in reach" if npc._region_valid else REASON_NO_MATERIAL}
-				goals = _reach_positions(inventory.get_item(item_id).tile, -1)
+				goals = _reach_positions(_item_pos(inventory.get_item(item_id)), -1)
 				if goals.is_empty():
 					_set_item_unreachable(item_id, _tick)
 					return {"reason": "material unreachable"}
@@ -962,7 +1115,7 @@ func _first_goals(job: Job, npc: Npc) -> Dictionary:
 			var it := _reserved_ground_item(job)
 			if it == null:
 				return {"reason": "item gone"}
-			var bt := stockpiles.booked_tile(job.id)
+			var bt := _haul_target(job)
 			if bt == NO_TILE or not _drop_ok_for(bt, npc):
 				# QA-8: the booked tile is out of this NPC's reach (or the
 				# booking is gone): move the booking to a zone tile it can use.
@@ -982,9 +1135,9 @@ func _assign(job: Job, npc: Npc, item_id: String) -> void:
 	npc.job_id = job.id
 	job.wait_reason = ""
 	match job.kind:
-		Job.KIND_DIG:
+		Job.KIND_DIG, Job.KIND_DECONSTRUCT:
 			job.phase = Job.PHASE_WORK
-		Job.KIND_BUILD:
+		Job.KIND_BUILD, Job.KIND_BUILDING:
 			if not item_id.is_empty():
 				_reserve(item_id, job)
 				job.phase = Job.PHASE_FETCH
@@ -993,7 +1146,7 @@ func _assign(job: Job, npc: Npc, item_id: String) -> void:
 		Job.KIND_HAUL:
 			job.phase = Job.PHASE_FETCH
 	if not job.item_id.is_empty():
-		job._fetch_tile = inventory.get_item(job.item_id).tile
+		job._fetch_tile = _item_pos(inventory.get_item(job.item_id))
 	_refresh_open(job)
 	jobs_changed.emit()
 
@@ -1013,10 +1166,26 @@ func _give_up(job: Job, reason: String) -> void:
 ## held by a haul job nobody works on yet may be taken over. A confined NPC
 ## only considers items inside its reach.
 func _find_material(job: Job, npc: Npc) -> String:
-	var mats: Array = ConstructionDefs.recipe(job.order_kind).get("materials", [])
+	var mats: Array = _recipe(job).get("materials", [])
 	var near := npc.tile
 	var best := ""
 	var best_d := 0
+	# Stacks in crates (M3): taken out with take_from_crate.
+	if crates != null:
+		for cid in crates.crate_ids():
+			var ct := _crate_tile(cid)
+			var d := absi(ct.x - near.x) + absi(ct.y - near.y)
+			if not best.is_empty() and d >= best_d:
+				continue
+			if npc._region_valid and not npc._region_reach.has(_idx(ct)):
+				continue
+			for it in inventory.crate_items(cid):
+				if not (it.material in mats) or _item_res.has(it.id) \
+						or int(_item_unreachable.get(it.id, -1)) > _tick:
+					continue
+				best = it.id
+				best_d = d
+				break
 	# Rings of chunks around the NPC (ground chunk index); stop once no unseen
 	# chunk can hold a nearer stack.
 	var c0 := Vector2i(clampi(near.x, 0, grid.width - 1), clampi(near.y, 0, grid.height - 1)) \
@@ -1091,6 +1260,242 @@ func _reserved_ground_item(job: Job) -> ItemStack:
 	return it
 
 
+## Reserved material on the ground or in a crate (build / building jobs).
+func _reserved_item(job: Job) -> ItemStack:
+	if job.item_id.is_empty() or _item_res.get(job.item_id, "") != job.id:
+		return null
+	var it := inventory.get_item(job.item_id)
+	if it == null or not (it.holder == Inventory.Holder.GROUND or it.holder == Inventory.Holder.CRATE):
+		return null
+	return it
+
+
+# --- M3: buildings, deconstruction, crates ------------------------------
+
+## {"materials", "kg", "work_ticks"} for a material-needing job; {} if unknown.
+func _recipe(job: Job) -> Dictionary:
+	if job.kind == Job.KIND_BUILDING:
+		var d: BuildingDef = buildings.def(job.building_key) if buildings != null else null
+		if d == null:
+			return {}
+		var mats: Array[StringName] = []
+		mats.assign(d.materials)
+		return {"materials": mats, "kg": d.kg, "work_ticks": d.work_ticks}
+	return ConstructionDefs.recipe(job.order_kind)
+
+
+## Footprint of a building / building-order job (empty rect for tile jobs).
+func _job_rect(job: Job) -> Rect2i:
+	if buildings == null:
+		return Rect2i()
+	if job.kind == Job.KIND_BUILDING:
+		return buildings.footprint(job.building_key, job.tile)
+	if job.kind == Job.KIND_DECONSTRUCT and not job.order_id.is_empty():
+		var b := buildings.get_building(job.order_id)
+		if not b.is_empty():
+			return buildings.footprint(b["key"], b["origin"])
+	return Rect2i()
+
+
+## Tiles that must be free of NPC bodies when the work completes: a wall
+## tile, or a door's footprint.
+func _blocking_tiles(job: Job) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if job.kind == Job.KIND_BUILD and job.order_kind == DesignationMap.Kind.BUILD_WALL:
+		out.append(job.tile)
+	elif job.kind == Job.KIND_BUILDING and buildings != null:
+		var d := buildings.def(job.building_key)
+		if d != null and d.is_door:
+			var r := _job_rect(job)
+			for y in range(r.position.y, r.end.y):
+				for x in range(r.position.x, r.end.x):
+					out.append(Vector2i(x, y))
+	return out
+
+
+## Where an item is reached from: its ground tile, or its crate's tile.
+func _item_pos(it: ItemStack) -> Vector2i:
+	if it == null:
+		return NO_TILE
+	if it.holder == Inventory.Holder.GROUND:
+		return it.tile
+	if it.holder == Inventory.Holder.CRATE:
+		return _crate_tile(it.holder_id)
+	return NO_TILE
+
+
+func _crate_tile(crate_id: String) -> Vector2i:
+	if buildings == null:
+		return NO_TILE
+	var b := buildings.get_building(crate_id)
+	return b["origin"] if not b.is_empty() else NO_TILE
+
+
+func _booked_crate(job: Job) -> String:
+	return crates.booked_crate(job.id) if crates != null else ""
+
+
+## Tile a haul job delivers to: its booked crate, else its booked zone tile.
+func _haul_target(job: Job) -> Vector2i:
+	var cid := _booked_crate(job)
+	if not cid.is_empty():
+		return _crate_tile(cid)
+	return stockpiles.booked_tile(job.id)
+
+
+func _release_storage(job: Job) -> void:
+	stockpiles.release(job.id)
+	if crates != null:
+		crates.release(job.id)
+
+
+## Spawns building materials (material -> kg) on the ground at the first
+## supported tile at/below `tile` (100 % refund, D-021).
+func _drop_materials(mats: Dictionary, tile: Vector2i) -> void:
+	var land := _landing(tile)
+	var keys := mats.keys()
+	keys.sort_custom(func(a: Variant, b: Variant) -> bool: return String(a) < String(b))
+	for m: Variant in keys:
+		var kg := float(mats[m])
+		if kg > 0.0:
+			inventory.spawn_ground(StringName(str(m)), kg, land)
+
+
+func _complete_building(job: Job) -> void:
+	if buildings == null or not buildings.can_place(job.building_key, job.tile).ok:
+		if build_orders != null:
+			build_orders.remove(job.order_id)  # order cannot be completed any more
+		_cancel(job)
+		return
+	var mats := {}
+	for it in inventory.site_items(job.id):
+		mats[it.material] = float(mats.get(it.material, 0.0)) + it.kg
+	job.phase = Job.PHASE_DONE  # our orders_changed handler ignores it now
+	if build_orders != null:
+		build_orders.remove(job.order_id)
+	inventory.consume_site(job.id)
+	_site_kg.erase(job.id)
+	buildings.place(job.building_key, job.tile, mats)
+	_remove_finished(job)
+
+
+## Deconstruct work: the same ticks as building it (PLACEHOLDER).
+func _deconstruct_ticks(job: Job) -> int:
+	if not job.order_id.is_empty() and buildings != null:
+		var b := buildings.get_building(job.order_id)
+		var d: BuildingDef = buildings.def(b.get("key", &"")) if not b.is_empty() else null
+		return maxi(1, d.work_ticks if d != null else 1)
+	var kind := ConstructionDefs.KIND_BUILD_WALL if grid.get_tile(job.tile) == TileRegistry.CONCRETE \
+			else ConstructionDefs.KIND_BUILD_LADDER
+	return maxi(1, int(ConstructionDefs.recipe(kind).get("work_ticks", 1)))
+
+
+func _drive_deconstruct(job: Job, npc: Npc) -> Dictionary:
+	var goals := _work_goals(job)
+	if goals.is_empty():
+		_give_up(job, REASON_UNREACHABLE)
+		return {"action": ACTION_NONE}
+	if not goals.has(npc.tile):
+		return {"action": ACTION_GOTO, "goals": goals}
+	job.phase = Job.PHASE_WORK
+	job.work_ticks += 1
+	var total := _deconstruct_ticks(job)
+	npc.work_progress = minf(1.0, float(job.work_ticks) / total)
+	if job.work_ticks >= total:
+		_complete_deconstruct(job)
+		return {"action": ACTION_NONE}
+	return {"action": ACTION_WORK}
+
+
+## Wall -> air + the wall recipe's rock; ladder -> removed + the ladder
+## recipe's kg (dirt: the material actually used is not tracked); building ->
+## crate contents to the ground, then removed with its materials refunded.
+func _complete_deconstruct(job: Job) -> void:
+	job.phase = Job.PHASE_DONE  # our designations_changed handler ignores it now
+	if not job.order_id.is_empty():
+		var b: Dictionary = buildings.get_building(job.order_id) if buildings != null else {}
+		if not b.is_empty():
+			var land := _landing(b["origin"])
+			if crates != null and crates.is_crate(job.order_id):
+				inventory.empty_crate_to_ground(job.order_id, land)
+			var r := buildings.remove(job.order_id)
+			if r.ok:
+				_drop_materials(r.data["materials"], b["origin"])
+	elif grid.get_tile(job.tile) == TileRegistry.CONCRETE:
+		if grid.apply_edit(Rect2i(job.tile, Vector2i.ONE), WorldGrid.Edit.DECONSTRUCT_WALL).ok:
+			var rec := ConstructionDefs.recipe(ConstructionDefs.KIND_BUILD_WALL)
+			_drop_materials({rec["materials"][0]: rec["kg"]}, job.tile)
+	elif grid.is_ladder(job.tile):
+		if grid.remove_structure(job.tile).ok:
+			var rec := ConstructionDefs.recipe(ConstructionDefs.KIND_BUILD_LADDER)
+			_drop_materials({LADDER_REFUND_MATERIAL: rec["kg"]}, job.tile)
+	_remove_finished(job)
+
+
+## A building lost its support (Buildings removed it): its materials and any
+## crate contents drop to the ground; jobs on it were already cancelled or
+## re-route through the normal signals.
+func _on_building_lost(id: String, _key: StringName, origin: Vector2i, materials: Dictionary) -> void:
+	var land := _landing(origin)
+	if not inventory.crate_items(id).is_empty():
+		inventory.empty_crate_to_ground(id, land)
+	_drop_materials(materials, origin)
+	var dj: Job = _jobs.get(_decon_by_building.get(id, ""))
+	if dj != null and not dj.is_done():
+		_cancel(dj)
+
+
+func _on_crates_changed(_building_id: String) -> void:
+	# A new crate (or a filter change) may take items that had no place.
+	for iid: String in _haul_retry:
+		_queue_item(iid)
+	_haul_retry.clear()
+
+
+func _on_orders_changed(_rect: Rect2i) -> void:
+	if _sync_orders():
+		jobs_changed.emit()
+
+
+## One building job per BuildOrders order. True if anything changed.
+func _sync_orders() -> bool:
+	if build_orders == null:
+		return false
+	var changed := false
+	var live := {}
+	for o in build_orders.orders():
+		var oid: String = o["id"]
+		live[oid] = true
+		var job: Job = _jobs.get(_by_order.get(oid, ""))
+		if job == null:
+			job = Job.new()
+			job.id = ids.allocate(ID_CATEGORY)
+			job.kind = Job.KIND_BUILDING
+			job.order_kind = DesignationMap.Kind.NONE
+			job.order_id = oid
+			job.building_key = o["key"]
+			job.tile = o["origin"]
+			job.priority = o["priority"]
+			_jobs[job.id] = job
+			_by_order[oid] = job.id
+			_refresh_open(job)
+			changed = true
+		elif job.priority != int(o["priority"]):
+			job.priority = o["priority"]
+			_refresh_open(job)
+			changed = true
+	for oid: String in _by_order.keys():
+		if live.has(oid):
+			continue
+		var job: Job = _jobs.get(_by_order[oid])
+		if job == null:
+			_by_order.erase(oid)
+		elif not job.is_done():
+			_cancel(job)
+			changed = true
+	return changed
+
+
 func _site(job: Job) -> float:
 	return float(_site_kg.get(job.id, 0.0))
 
@@ -1114,7 +1519,7 @@ func _all_blocked(job: Job, tick: int) -> bool:
 		return false
 	var eligible := 0
 	for npc in colony.all_npcs():
-		if not npc.work_enabled.get(job.kind, false):
+		if not npc.work_enabled.get(job.work_type(), false):
 			continue
 		eligible += 1
 		if int(job._marks.get(npc.id, -1)) > tick:
@@ -1339,7 +1744,7 @@ func _unassign(job: Job) -> void:
 ## Order removed / invalid: stop the worker, return site materials, release all.
 func _cancel(job: Job) -> void:
 	_unassign(job)
-	if job.kind == Job.KIND_BUILD and inventory.site_kg(job.id) > 0.0:
+	if job.needs_material() and inventory.site_kg(job.id) > 0.0:
 		inventory.return_site_to_ground(job.id, _landing(job.tile))
 	_site_kg.erase(job.id)
 	_delete_job(job)
@@ -1361,12 +1766,20 @@ func _delete_job(job: Job) -> void:
 	if not _jobs.has(job.id):
 		return
 	_jobs.erase(job.id)
-	if job.kind != Job.KIND_HAUL and grid.in_bounds(job.tile) \
+	if job.kind != Job.KIND_HAUL and job.kind != Job.KIND_BUILDING and grid.in_bounds(job.tile) \
 			and _by_tile.get(_idx(job.tile), "") == job.id:
 		_by_tile.erase(_idx(job.tile))
 		_count_wall(job, -1)
+	for idx: int in _job_tiles.get(job.id, []):
+		if _by_tile.get(idx, "") == job.id:
+			_by_tile.erase(idx)
+	_job_tiles.erase(job.id)
+	if job.kind == Job.KIND_BUILDING and _by_order.get(job.order_id, "") == job.id:
+		_by_order.erase(job.order_id)
+	if job.kind == Job.KIND_DECONSTRUCT and _decon_by_building.get(job.order_id, "") == job.id:
+		_decon_by_building.erase(job.order_id)
 	_release_item(job)
-	stockpiles.release(job.id)
+	_release_storage(job)
 	_site_kg.erase(job.id)
 	_refresh_open(job)
 	job.phase = Job.PHASE_DONE
@@ -1376,19 +1789,41 @@ func _delete_job(job: Job) -> void:
 func _restore_job(job: Job, carried_claims: Dictionary) -> bool:
 	if job.is_done():
 		return false
-	if job.kind == Job.KIND_HAUL:
-		job.order_kind = DesignationMap.Kind.NONE
-	else:
-		var want := designations.get_kind(job.tile)
-		var kind_ok := (job.kind == Job.KIND_DIG and job.order_kind == DesignationMap.Kind.DIG) \
-				or (job.kind == Job.KIND_BUILD and job.order_kind in
-						[DesignationMap.Kind.BUILD_WALL, DesignationMap.Kind.BUILD_LADDER])
-		if not kind_ok or want != job.order_kind or _by_tile.has(_idx(job.tile)):
-			return false
-		job.priority = designations.get_priority(job.tile)
+	match job.kind:
+		Job.KIND_HAUL:
+			job.order_kind = DesignationMap.Kind.NONE
+		Job.KIND_BUILDING:
+			if build_orders == null or buildings == null:
+				return false
+			var o := build_orders.get_order(job.order_id)
+			if o.is_empty() or _by_order.has(job.order_id):
+				return false
+			job.order_kind = DesignationMap.Kind.NONE
+			job.building_key = o["key"]
+			job.tile = o["origin"]
+			job.priority = o["priority"]
+		Job.KIND_DECONSTRUCT:
+			if designations.get_kind(job.tile) != DesignationMap.Kind.DECONSTRUCT \
+					or _by_tile.has(_idx(job.tile)):
+				return false
+			var bid := buildings.building_at(job.tile) if buildings != null else ""
+			if bid != job.order_id or (not bid.is_empty() and _decon_by_building.has(bid)):
+				return false
+			job.order_kind = DesignationMap.Kind.DECONSTRUCT
+			job.priority = designations.get_priority(job.tile)
+		_:
+			var want := designations.get_kind(job.tile)
+			var kind_ok := (job.kind == Job.KIND_DIG and job.order_kind == DesignationMap.Kind.DIG) \
+					or (job.kind == Job.KIND_BUILD and job.order_kind in
+							[DesignationMap.Kind.BUILD_WALL, DesignationMap.Kind.BUILD_LADDER])
+			if not kind_ok or want != job.order_kind or _by_tile.has(_idx(job.tile)):
+				return false
+			job.priority = designations.get_priority(job.tile)
 	if not job.item_id.is_empty():
 		var it := inventory.get_item(job.item_id)
-		if it == null or it.holder != Inventory.Holder.GROUND or _item_res.has(job.item_id):
+		var holder_ok := it != null and (it.holder == Inventory.Holder.GROUND
+				or (it.holder == Inventory.Holder.CRATE and job.needs_material()))
+		if not holder_ok or _item_res.has(job.item_id):
 			job.item_id = ""
 	if not job.carried_id.is_empty():
 		var c := inventory.get_item(job.carried_id)
@@ -1401,9 +1836,9 @@ func _restore_job(job: Job, carried_claims: Dictionary) -> bool:
 		job.phase = Job.PHASE_OPEN
 	else:
 		match job.kind:
-			Job.KIND_DIG:
+			Job.KIND_DIG, Job.KIND_DECONSTRUCT:
 				job.phase = Job.PHASE_WORK
-			Job.KIND_BUILD:
+			Job.KIND_BUILD, Job.KIND_BUILDING:
 				if not job.carried_id.is_empty():
 					# A stack cleared off a wall site is never delivered to it.
 					job.phase = Job.PHASE_CLEAR if job.phase == Job.PHASE_CLEAR else Job.PHASE_DELIVER
@@ -1416,9 +1851,17 @@ func _restore_job(job: Job, carried_claims: Dictionary) -> bool:
 	_jobs[job.id] = job
 	if not job.carried_id.is_empty():
 		carried_claims[job.carried_id] = job.id
-	if job.kind != Job.KIND_HAUL:
-		_by_tile[_idx(job.tile)] = job.id
-		_count_wall(job, 1)
+	match job.kind:
+		Job.KIND_HAUL:
+			pass
+		Job.KIND_BUILDING:
+			_by_order[job.order_id] = job.id
+		_:
+			_by_tile[_idx(job.tile)] = job.id
+			_count_wall(job, 1)
+			if job.kind == Job.KIND_DECONSTRUCT and not job.order_id.is_empty():
+				_decon_by_building[job.order_id] = job.id
+				_job_tiles[job.id] = [_idx(job.tile)]
 	if not job.item_id.is_empty():
 		_item_res[job.item_id] = job.id
 	_refresh_open(job)
@@ -1457,6 +1900,47 @@ func _sync_all_designations() -> void:
 		_sync_tile(idx)
 
 
+## A tile of a building deconstruct job lost its order: the job keeps the
+## other designated tiles (moving its main tile if needed) or is cancelled
+## when none is left. True if anything changed.
+func _unmap_decon_tile(job: Job, idx: int) -> bool:
+	if _by_tile.get(idx, "") == job.id:
+		_by_tile.erase(idx)
+	var tl: Array = _job_tiles.get(job.id, [])
+	tl.erase(idx)
+	var left: Array = []
+	for i: int in tl:
+		if designations.entries().get(i, DesignationMap.Kind.NONE) == DesignationMap.Kind.DECONSTRUCT \
+				and _by_tile.get(i, "") == job.id:
+			left.append(i)
+	if left.is_empty():
+		_job_tiles.erase(job.id)
+		_cancel(job)
+		return true
+	_job_tiles[job.id] = left
+	if _idx(job.tile) == idx:
+		var was_open := job._open
+		if was_open:
+			_set_open_false_for_move(job)
+		job.tile = _tile_of(left[0])
+		job.priority = designations.get_priority(job.tile)
+		_refresh_open(job)
+	return true
+
+
+## The open bucket is keyed by job.tile's chunk: take the job out before
+## its tile changes (_refresh_open puts it back).
+func _set_open_false_for_move(job: Job) -> void:
+	var ci := _chunk_of(job.tile)
+	var b: Variant = _open_chunks.get(ci)
+	if b != null:
+		(b as Dictionary).erase(job.id)
+		if (b as Dictionary).is_empty():
+			_open_chunks.erase(ci)
+	_prio_count[job._open_prio] -= 1
+	job._open = false
+
+
 ## Wall orders change where NPCs prefer to stand: cached goals go stale.
 func _count_wall(job: Job, delta: int) -> void:
 	if job.order_kind == DesignationMap.Kind.BUILD_WALL and job.kind == Job.KIND_BUILD:
@@ -1470,26 +1954,54 @@ func _sync_tile(idx: int) -> bool:
 	var job: Job = _jobs.get(_by_tile.get(idx, ""))
 	if job != null and job.is_done():
 		return false
+	var tile := _tile_of(idx)
+	var bid := ""
+	if kind == DesignationMap.Kind.DECONSTRUCT and buildings != null:
+		bid = buildings.building_at(tile)
 	var changed := false
-	if job != null and job.order_kind != kind:
-		_cancel(job)
+	if job != null and (job.order_kind != kind or job.order_id != bid):
+		if job.kind == Job.KIND_DECONSTRUCT and not job.order_id.is_empty():
+			changed = _unmap_decon_tile(job, idx)
+		else:
+			_cancel(job)
+			changed = true
 		job = null
-		changed = true
 	if kind == DesignationMap.Kind.NONE:
 		return changed
-	var tile := _tile_of(idx)
+	if job == null and not bid.is_empty():
+		# One deconstruct job per building, shared by all its designated tiles.
+		var bj: Job = _jobs.get(_decon_by_building.get(bid, ""))
+		if bj != null and not bj.is_done():
+			_by_tile[idx] = bj.id
+			var tl: Array = _job_tiles.get(bj.id, [])
+			if not tl.has(idx):
+				tl.append(idx)
+			_job_tiles[bj.id] = tl
+			return true
 	if job == null:
 		job = Job.new()
 		job.id = ids.allocate(ID_CATEGORY)
-		job.kind = Job.KIND_DIG if kind == DesignationMap.Kind.DIG else Job.KIND_BUILD
+		match kind:
+			DesignationMap.Kind.DIG:
+				job.kind = Job.KIND_DIG
+			DesignationMap.Kind.DECONSTRUCT:
+				job.kind = Job.KIND_DECONSTRUCT
+				job.order_id = bid
+			_:
+				job.kind = Job.KIND_BUILD
 		job.order_kind = kind
 		job.tile = tile
 		job.priority = designations.get_priority(tile)
 		_jobs[job.id] = job
 		_by_tile[idx] = job.id
+		if not bid.is_empty():
+			_decon_by_building[bid] = job.id
+			_job_tiles[job.id] = [idx]
 		_count_wall(job, 1)
 		_refresh_open(job)
 		return true
+	if job.kind == Job.KIND_DECONSTRUCT and job.tile != tile:
+		return changed  # a secondary tile of a building: the job keeps its own tile's priority
 	var p := designations.get_priority(tile)
 	if job.priority != p:
 		job.priority = p
@@ -1540,6 +2052,14 @@ func _haul_scan(tick: int) -> void:
 			_haul_retry[iid] = true
 			continue
 		var kg := minf(it.kg, Inventory.CARRY_CAPACITY_KG)
+		# Crates first (D-021): nearest accepting crate with room.
+		if crates != null:
+			var cid := crates.find_crate(it.material, kg, it.tile)
+			if not cid.is_empty():
+				var cj := _new_haul_job(it)
+				if crates.book(cid, kg, cj.id).ok:
+					_add_haul_job(cj, iid)
+					continue
 		var best := -1
 		var best_d := 0
 		for i in zone_tiles.size():
@@ -1552,21 +2072,30 @@ func _haul_scan(tick: int) -> void:
 		if best < 0:
 			_haul_retry[iid] = true
 			continue
-		var job := Job.new()
-		job.id = ids.allocate(ID_CATEGORY)
-		job.kind = Job.KIND_HAUL
-		job.order_kind = DesignationMap.Kind.NONE
-		job.tile = it.tile
-		job.priority = HAUL_PRIORITY
+		var job := _new_haul_job(it)
 		if not stockpiles.book(zone_tiles[best], kg, job.id).ok:
 			_haul_retry[iid] = true
 			continue
 		free[best] -= kg
-		job.item_id = iid
-		_jobs[job.id] = job
-		_item_res[iid] = job.id
-		_refresh_open(job)
-		jobs_changed.emit()
+		_add_haul_job(job, iid)
+
+
+func _new_haul_job(it: ItemStack) -> Job:
+	var job := Job.new()
+	job.id = ids.allocate(ID_CATEGORY)
+	job.kind = Job.KIND_HAUL
+	job.order_kind = DesignationMap.Kind.NONE
+	job.tile = it.tile
+	job.priority = HAUL_PRIORITY
+	return job
+
+
+func _add_haul_job(job: Job, iid: String) -> void:
+	job.item_id = iid
+	_jobs[job.id] = job
+	_item_res[iid] = job.id
+	_refresh_open(job)
+	jobs_changed.emit()
 
 
 func _queue_item(iid: String) -> void:
@@ -1716,10 +2245,45 @@ func _on_tiles_changed(rect: Rect2i) -> void:
 ## Cached work positions of a dig/build job.
 func _work_goals(job: Job) -> Array[Vector2i]:
 	if job._goals_version != _geom_version or job._goals_key != job.tile:
-		job._goals = _reach_positions(job.tile, job.order_kind)
+		job._goals = _compute_work_goals(job)
 		job._goals_version = _geom_version
 		job._goals_key = job.tile
 	return job._goals
+
+
+func _compute_work_goals(job: Job) -> Array[Vector2i]:
+	match job.kind:
+		Job.KIND_BUILDING:
+			var d := buildings.def(job.building_key) if buildings != null else null
+			return _reach_rect(_job_rect(job), d != null and d.is_door)
+		Job.KIND_DECONSTRUCT:
+			if not job.order_id.is_empty():
+				return _reach_rect(_job_rect(job), false)
+			if grid.get_tile(job.tile) == TileRegistry.CONCRETE:
+				return _reach_positions(job.tile, DesignationMap.Kind.DIG)  # solid: needs exposure
+			return _reach_positions(job.tile, -1)
+	return _reach_positions(job.tile, job.order_kind)
+
+
+## Work positions for a multi-tile footprint: the union of the plain reach of
+## its tiles. keep_clear (doors): positions whose body overlaps the footprint
+## are left out, so the builder never stands in its own doorway.
+func _reach_rect(r: Rect2i, keep_clear: bool) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if not r.has_area():
+		return out
+	var seen := {}
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			for f in _reach_positions(Vector2i(x, y), -1):
+				if seen.has(f):
+					continue
+				seen[f] = true
+				if keep_clear and f.x >= r.position.x and f.x < r.end.x \
+						and f.y >= r.position.y and f.y - (nav.clearance - 1) < r.end.y:
+					continue
+				out.append(f)
+	return out
 
 
 ## Standable feet tiles from which tile t is in reach. mode: DesignationMap

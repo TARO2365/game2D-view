@@ -184,7 +184,7 @@ func set_work_enabled(npc_id: String, work: StringName, on: bool) -> CommandResu
 		jobs.on_npcs_changed()
 	elif not n.job_id.is_empty():
 		var job := jobs.get_job(n.job_id)
-		if job != null and job.kind == work:
+		if job != null and job.work_type() == work:
 			jobs.release_npc(n)
 	npcs_changed.emit()
 	return CommandResult.success({"work": work, "on": on})
@@ -341,8 +341,8 @@ func _refresh_state(n: Npc) -> void:
 ## site it is not building): its job is released (and ignored for
 ## STOP_IGNORE_TICKS) and it walks to the nearest standable tile whose body
 ## covers no wall order. True if it got somewhere to go.
-func step_aside(n: Npc) -> bool:
-	var groups := _stand_groups_near(n.tile, true)
+func step_aside(n: Npc, avoid: Rect2i = Rect2i()) -> bool:
+	var groups := _stand_groups_near(n.tile, true, avoid)
 	var goal := NO_TILE
 	var path: Array[Vector2i] = []
 	for g: Array[Vector2i] in groups:
@@ -516,7 +516,7 @@ func _surface_tile(x: int) -> Vector2i:
 
 ## Standable tiles within MOVE_SEARCH_RADIUS of t, grouped by Manhattan
 ## distance (nearest group first, at most MOVE_SEARCH_GROUPS groups).
-func _stand_groups_near(t: Vector2i, off_wall_orders: bool = false) -> Array:
+func _stand_groups_near(t: Vector2i, off_wall_orders: bool = false, avoid: Rect2i = Rect2i()) -> Array:
 	var by_d := {}
 	for dy in range(-MOVE_SEARCH_RADIUS, MOVE_SEARCH_RADIUS + 1):
 		for dx in range(-MOVE_SEARCH_RADIUS, MOVE_SEARCH_RADIUS + 1):
@@ -524,6 +524,8 @@ func _stand_groups_near(t: Vector2i, off_wall_orders: bool = false) -> Array:
 			if d > MOVE_SEARCH_RADIUS:
 				continue
 			var p := t + Vector2i(dx, dy)
+			if avoid.has_area() and Rect2i(p.x, p.y - (nav.clearance - 1), 1, nav.clearance).intersects(avoid):
+				continue  # body would still cover the blocked site
 			if nav.can_stand(p) and not (off_wall_orders and jobs.body_on_wall_order(p)):
 				if not by_d.has(d):
 					var arr: Array[Vector2i] = []
