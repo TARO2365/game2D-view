@@ -10,11 +10,12 @@ var id: String = ""
 var material: StringName = &""
 ## Mass in kg, always > 0 while the stack exists.
 var kg: float = 0.0
-## Inventory.Holder value (GROUND / NPC / SITE).
+## Inventory.Holder value (GROUND / NPC / SITE / CRATE).
 var holder: int = 0
 ## Ground tile; meaningful only when holder == Inventory.Holder.GROUND.
 var tile: Vector2i = Vector2i(-1, -1)
-## NPC id when holder == NPC, job id when holder == SITE, "" when GROUND.
+## NPC id when holder == NPC, job id when holder == SITE, building id when
+## holder == CRATE, "" when GROUND.
 var holder_id: String = ""
 
 
