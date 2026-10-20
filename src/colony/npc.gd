@@ -18,7 +18,9 @@ var tile: Vector2i = NO_TILE
 var prev_tile: Vector2i = NO_TILE
 ## 0..1 progress from prev_tile to tile (render interpolation).
 var move_progress: float = 0.0
-## &"idle", &"moving", &"working", &"carrying" (moving with an item).
+## &"idle" (no job), &"moving", &"working", &"carrying" (moving with an item),
+## &"waiting" (holds a job but cannot progress right now: blocked site, no
+## path budget, ...; Job.wait_reason / JobManager.describe_job say why).
 var state: StringName = &"idle"
 ## Current job id, "" when none. Set only by JobManager.
 var job_id: String = ""
@@ -48,6 +50,9 @@ var _region_valid: bool = false
 var _region: Dictionary = {}        # standable feet tile index -> true
 var _region_reach: Dictionary = {}  # tile index workable from the region -> true
 var _region_bbox: Rect2i = Rect2i()
+## Stockpile tiles (index -> true) this NPC failed to reach while delivering;
+## cleared when terrain near the tile or near the NPC changes. Not saved.
+var _blocked_drops: Dictionary = {}
 
 
 func is_moving() -> bool:

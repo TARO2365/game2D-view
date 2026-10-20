@@ -22,6 +22,7 @@ const TICKS_PER_LADDER_STEP := 7   # PLACEHOLDER
 const TICKS_PER_DROP_TILE := 2     # PLACEHOLDER
 const MAX_DROP := 4                # D-017: drops of more than 4 tiles are not allowed
 const PATH_BUDGET_PER_TICK := 8    # PLACEHOLDER path searches per tick across all NPCs
+const EXPANSION_BUDGET_PER_TICK := 4000  # PLACEHOLDER A* expansions per tick (spike cap, QA-2)
 const DEFAULT_MAX_EXPANSIONS := 4000  # PLACEHOLDER
 const NO_TILE := Vector2i(-1, -1)
 
@@ -67,6 +68,7 @@ var _t := PackedByteArray()
 var _s := PackedByteArray()
 var _budget_tick := -1
 var _budget_used := 0
+var _tick_expansions := 0
 
 
 func _init(world_grid: WorldGrid, clearance_tiles: int = 3) -> void:
@@ -134,6 +136,7 @@ func find_path(from: Vector2i, goals: Array[Vector2i], max_expansions: int = DEF
 	var t0 := Time.get_ticks_usec()
 	var out := _search(from, goals, max_expansions)
 	search_usec_total += Time.get_ticks_usec() - t0
+	_tick_expansions += last_expansions
 	expansions_total += last_expansions
 	return out
 
@@ -222,11 +225,15 @@ func last_region() -> PackedInt32Array:
 
 ## Takes one path search from this tick's shared budget. False = budget
 ## exhausted; the caller waits for a later tick.
+## The budget also ends once this tick's searches expanded
+## EXPANSION_BUDGET_PER_TICK tiles (a few long failing searches would
+## otherwise make one tick very slow).
 func consume_budget(tick: int) -> bool:
 	if tick != _budget_tick:
 		_budget_tick = tick
 		_budget_used = 0
-	if _budget_used >= PATH_BUDGET_PER_TICK:
+		_tick_expansions = 0
+	if _budget_used >= PATH_BUDGET_PER_TICK or _tick_expansions >= EXPANSION_BUDGET_PER_TICK:
 		return false
 	_budget_used += 1
 	return true
@@ -235,6 +242,8 @@ func consume_budget(tick: int) -> bool:
 func budget_left(tick: int) -> int:
 	if tick != _budget_tick:
 		return PATH_BUDGET_PER_TICK
+	if _tick_expansions >= EXPANSION_BUDGET_PER_TICK:
+		return 0
 	return PATH_BUDGET_PER_TICK - _budget_used
 
 

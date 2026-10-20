@@ -6,6 +6,7 @@ extends RefCounted
 ## Phases:
 ##   dig    open -> work -> done
 ##   build  open -> fetch -> deliver -> (fetch ...) -> work -> done
+##          (wall: work -> clear -> work while stacks lie on the wall tile)
 ##   haul   open -> fetch -> deliver -> done
 ## `open` = no worker. Reservations held by a job: its worker (worker_id),
 ## at most one reserved ground item (item_id) and at most one item carried by
@@ -22,7 +23,10 @@ const PHASE_FETCH := &"fetch"
 const PHASE_DELIVER := &"deliver"
 const PHASE_WORK := &"work"
 const PHASE_DONE := &"done"
-const PHASES: Array[StringName] = [PHASE_OPEN, PHASE_FETCH, PHASE_DELIVER, PHASE_WORK, PHASE_DONE]
+## Wall build: carrying a stack that lay on the wall tile to a nearby spot.
+const PHASE_CLEAR := &"clear"
+const PHASES: Array[StringName] = [PHASE_OPEN, PHASE_FETCH, PHASE_DELIVER, PHASE_WORK, PHASE_DONE,
+		PHASE_CLEAR]
 
 ## Stable id from StableIdAllocator category "job" ("job:7").
 var id: String = ""
@@ -59,6 +63,10 @@ var _open_prio: int = 0
 var _goals: Array[Vector2i] = []
 var _goals_version: int = -1
 var _goals_key: Vector2i = Vector2i(-1, -1)
+## Tile of the item the worker is walking to (fetch); a change = re-route.
+var _fetch_tile: Vector2i = Vector2i(-1, -1)
+## Ticks a wall build has waited for an NPC body to leave its tile.
+var _blocked_ticks: int = 0
 
 
 func is_done() -> bool:

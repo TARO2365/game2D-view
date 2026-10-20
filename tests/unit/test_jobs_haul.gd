@@ -147,3 +147,44 @@ func test_lost_booking_without_space_drops_in_place() -> void:
 	assert_eq(jobs.job_count(), 0)
 	assert_eq(inv.all_items()[0].holder, Inventory.Holder.GROUND)
 	assert_true(nav.can_stand(inv.all_items()[0].tile), "dropped where the NPC stood")
+
+
+func test_item_gravity_after_floor_dug() -> void:
+	inv.spawn_ground(&"dirt", 50.0, Vector2i(5, 9))
+	var other := inv.spawn_ground(&"dirt", 10.0, Vector2i(9, 9))
+	g.apply_edit(Rect2i(5, 10, 1, 3), WorldGrid.Edit.DIG)
+	assert_eq(inv.all_items()[0].tile, Vector2i(5, 12), "fell to the new floor")
+	assert_eq(inv.get_item(other).tile, Vector2i(9, 9), "items outside the changed columns stay")
+	assert_eq(inv.check_conservation(), [] as Array[String])
+
+
+func test_reserved_item_falls_and_is_still_hauled() -> void:
+	var n := col.spawn_npc(Vector2i(30, 9))
+	sp.designate(Rect2i(33, 9, 2, 1))
+	var id := inv.spawn_ground(&"dirt", 50.0, Vector2i(5, 9))
+	assert_true(_run(20, func() -> bool: return n.job_id != "" and n.is_moving()))
+	var job := jobs.get_job(n.job_id)
+	assert_eq(job.item_id, id)
+	# Ladder shaft under the stack so it stays reachable after falling.
+	g.apply_edit(Rect2i(5, 10, 1, 3), WorldGrid.Edit.DIG)
+	for y in range(10, 13):
+		g.apply_structure(Vector2i(5, y), WorldGrid.Structure.LADDER)
+	assert_eq(inv.get_item(id).tile, Vector2i(5, 12))
+	assert_eq(job.item_id, id, "reservation kept")
+	assert_true(_run(800, _all_stored))
+	assert_eq(jobs.job_count(), 0)
+
+
+func test_unreachable_stockpile_not_retried_by_same_npc() -> void:
+	g.apply_edit(Rect2i(30, 6, 1, 4), WorldGrid.Edit.BUILD_WALL)  # pillar
+	sp.designate(Rect2i(30, 5, 1, 1))
+	inv.spawn_ground(&"dirt", 50.0, Vector2i(10, 9))
+	var n := col.spawn_npc(Vector2i(5, 9))
+	var pickups := [0]
+	inv.items_changed.connect(func(iid: String) -> void:
+		var it := inv.get_item(iid)
+		if it != null and it.holder == Inventory.Holder.NPC:
+			pickups[0] += 1)
+	_run(1500)
+	assert_lte(pickups[0], 1)
+	assert_eq(n.state, &"idle")
