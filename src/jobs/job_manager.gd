@@ -413,7 +413,7 @@ func release_npc(npc: Npc) -> String:
 	if job == null or job.worker_id != npc.id:
 		var c := inventory.carried_by(npc.id)
 		if c != null:
-			inventory.drop(npc.id, npc.tile)
+			_put_down(npc.id, npc.tile)
 		if _colony != null and not npc.job_id.is_empty():
 			_colony._on_job_released(npc)
 		return ""
@@ -508,7 +508,7 @@ func revalidate() -> void:
 		if not job.carried_id.is_empty():
 			var it := inventory.get_item(job.carried_id)
 			if it != null and it.holder == Inventory.Holder.NPC:
-				inventory.drop(it.holder_id, npc.tile if npc != null else _landing(job.tile))
+				_put_down(it.holder_id, npc.tile if npc != null else _landing(job.tile))
 			job.carried_id = ""
 		job.worker_id = ""
 		if job.kind == Job.KIND_HAUL:
@@ -526,10 +526,10 @@ func revalidate() -> void:
 		if c != null:
 			var j2: Job = _jobs.get(npc.job_id)
 			if j2 == null or j2.carried_id != c.id:
-				inventory.drop(npc.id, npc.tile)
+				_put_down(npc.id, npc.tile)
 	for it in inventory.all_items():
 		if it.holder == Inventory.Holder.NPC and colony.get_npc(it.holder_id) == null:
-			inventory.drop(it.holder_id, _fallback_tile())
+			_put_down(it.holder_id, _fallback_tile())
 	jobs_changed.emit()
 
 
@@ -654,7 +654,7 @@ func _drive_build(job: Job, npc: Npc) -> Dictionary:
 					continue
 				var spots := _clear_spots(job.tile)
 				if spots.is_empty() or spots.has(npc.tile):
-					inventory.drop(npc.id, npc.tile)  # npc.tile is never the wall tile
+					_put_down(npc.id, npc.tile)  # npc.tile is never the wall tile
 					job.carried_id = ""
 					job.phase = Job.PHASE_WORK
 					continue
@@ -777,7 +777,7 @@ func _drive_haul(job: Job, npc: Npc) -> Dictionary:
 					return {"action": ACTION_NONE}
 				if not goals.has(npc.tile):
 					return {"action": ACTION_GOTO, "goals": goals}
-				inventory.drop(npc.id, t)
+				_put_down(npc.id, t)
 				job.carried_id = ""
 				_remove_finished(job)
 				return {"action": ACTION_NONE}
@@ -788,7 +788,7 @@ func _drive_haul(job: Job, npc: Npc) -> Dictionary:
 
 ## No stockpile space any more: drop the stack where the NPC stands.
 func _finish_haul_here(job: Job, npc: Npc) -> void:
-	inventory.drop(npc.id, npc.tile)
+	_put_down(npc.id, npc.tile)
 	job.carried_id = ""
 	_remove_finished(job)
 
@@ -829,9 +829,10 @@ func _complete_build(job: Job) -> void:
 func _top_candidates(npc: Npc, tick: int) -> Array[Job]:
 	var best: Array[Job] = []
 	var scores: Array[int] = []
+	var zone_ok := _has_usable_zone(npc)
 	if npc._region_valid:
 		for c in grid.chunks_in_rect(npc._region_bbox.grow(nav.clearance + 1)):
-			_scan_bucket(grid.chunk_index(c), npc, tick, best, scores, true)
+			_scan_bucket(grid.chunk_index(c), npc, tick, best, scores, true, zone_ok)
 		return best
 	var p_max := -1
 	for p in range(_prio_count.size() - 1, -1, -1):
@@ -853,7 +854,7 @@ func _top_candidates(npc: Npc, tick: int) -> Array[Job]:
 			while dx <= r:
 				var cx := c0.x + dx
 				if cx >= 0 and cx < _chunks_x:
-					_scan_bucket(cy * _chunks_x + cx, npc, tick, best, scores, false)
+					_scan_bucket(cy * _chunks_x + cx, npc, tick, best, scores, false, zone_ok)
 				dx += 1 if edge or r == 0 else 2 * r
 		if best.size() >= ASSIGN_CANDIDATES:
 			var kth := best[ASSIGN_CANDIDATES - 1]
@@ -863,8 +864,45 @@ func _top_candidates(npc: Npc, tick: int) -> Array[Job]:
 	return best
 
 
+## Could npc deliver to zone tile t? (Not a tile it already failed to reach,
+## and inside its known region if it is confined.)
+func _drop_ok_for(t: Vector2i, npc: Npc) -> bool:
+	var i := _idx(t)
+	if npc._blocked_drops.has(i):
+		return false
+	return not npc._region_valid or npc._region_reach.has(i)
+
+
+## Any zone tile npc could deliver to (capacity not checked).
+func _has_usable_zone(npc: Npc) -> bool:
+	if npc._blocked_drops.is_empty() and not npc._region_valid:
+		return stockpiles.count() > 0
+	for t in stockpiles.tiles():
+		if _drop_ok_for(t, npc):
+			return true
+	return false
+
+
+## QA-8: moves a haul job's booking to the nearest zone tile (Manhattan from
+## the stack) that npc can deliver to and that has room. False if none.
+## Each failed delivery blocks one more tile for that NPC (or records its
+## confined region), so re-booking cannot loop forever.
+func _rebook_for(job: Job, it: ItemStack, npc: Npc) -> bool:
+	var kg := minf(it.kg, Inventory.CARRY_CAPACITY_KG)
+	var old := stockpiles.booked_tile(job.id)
+	var cands: Array = []
+	for t in stockpiles.tiles():
+		if t != old and _drop_ok_for(t, npc):
+			cands.append([absi(t.x - it.tile.x) + absi(t.y - it.tile.y), t])
+	cands.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	for c: Array in cands:
+		if stockpiles.free_capacity(c[1]) + KG_EPSILON >= kg and stockpiles.book(c[1], kg, job.id).ok:
+			return true
+	return false
+
+
 func _scan_bucket(ci: int, npc: Npc, tick: int, best: Array[Job], scores: Array[int],
-		region_only: bool) -> void:
+		region_only: bool, zone_ok: bool) -> void:
 	var bucket: Variant = _open_chunks.get(ci)
 	if bucket == null:
 		return
@@ -875,11 +913,10 @@ func _scan_bucket(ci: int, npc: Npc, tick: int, best: Array[Job], scores: Array[
 			continue
 		if region_only and not npc._region_reach.has(_idx(job.tile)):
 			continue
-		if job.kind == Job.KIND_HAUL:
+		if job.kind == Job.KIND_HAUL and not zone_ok:
 			var bt := stockpiles.booked_tile(job.id)
-			if bt != NO_TILE and (npc._blocked_drops.has(_idx(bt))
-					or (region_only and not npc._region_reach.has(_idx(bt)))):
-				continue  # its stockpile tile is out of this NPC's reach
+			if bt == NO_TILE or not _drop_ok_for(bt, npc):
+				continue  # no zone tile this NPC could deliver to at all
 		var score := job.priority * 1000000 \
 				- (absi(job.tile.x - npc.tile.x) + absi(job.tile.y - npc.tile.y))
 		var n := best.size()
@@ -926,10 +963,11 @@ func _first_goals(job: Job, npc: Npc) -> Dictionary:
 			if it == null:
 				return {"reason": "item gone"}
 			var bt := stockpiles.booked_tile(job.id)
-			if bt != NO_TILE and npc._blocked_drops.has(_idx(bt)):
-				return {"reason": "stockpile out of reach"}
-			if npc._region_valid and (bt == NO_TILE or not npc._region_reach.has(_idx(bt))):
-				return {"reason": "stockpile out of reach"}
+			if bt == NO_TILE or not _drop_ok_for(bt, npc):
+				# QA-8: the booked tile is out of this NPC's reach (or the
+				# booking is gone): move the booking to a zone tile it can use.
+				if not _rebook_for(job, it, npc):
+					return {"reason": "stockpile out of reach"}
 			goals = _reach_positions(it.tile, -1)
 			if goals.is_empty():
 				_set_item_unreachable(it.id, _tick)
@@ -1284,7 +1322,7 @@ func _unassign(job: Job) -> void:
 			var c := inventory.carried_by(w)
 			if c != null and c.id == job.carried_id:
 				var drop_tile := npc.tile if npc != null else _landing(job.tile)
-				inventory.drop(w, drop_tile)
+				_put_down(w, drop_tile)
 			job.carried_id = ""
 		job.worker_id = ""
 		if npc != null and npc.job_id == job.id:
@@ -1743,3 +1781,10 @@ func _idx(p: Vector2i) -> int:
 
 func _tile_of(idx: int) -> Vector2i:
 	return Vector2i(idx % grid.width, idx / grid.width)
+
+
+## Every NPC -> ground drop goes through here: the stack lands on the first
+## tile at/below `tile` with a solid tile directly beneath (same rule as item
+## gravity), so nothing is left floating on a ladder mid-shaft (QA-9).
+func _put_down(npc_id: String, tile: Vector2i) -> CommandResult:
+	return inventory.drop(npc_id, _landing(tile))

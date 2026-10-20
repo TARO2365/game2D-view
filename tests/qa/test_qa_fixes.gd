@@ -275,16 +275,16 @@ func test_qa4_repro_fixed() -> void:
 ## ticks the stack lies at (24, 9) with an open "Haul dirt 50 kg" job that keeps
 ## booking the unreachable pillar tile; the reachable tile (37, 9) stays empty.
 func test_unreachable_nearest_zone_does_not_block_reachable_zone() -> void:
-	pending("BUG QA-8: haul keeps booking the nearest (unreachable) zone tile; reachable zone never used")
-	return
-	@warning_ignore("unreachable_code")
 	_setup(Vector2i(40, 30))
 	ses.grid.apply_edit(Rect2i(30, 6, 1, 4), WorldGrid.Edit.BUILD_WALL)
 	assert_true(ses.stockpiles.designate(Rect2i(30, 5, 1, 1)).ok)   # pillar top: unreachable
-	assert_true(ses.stockpiles.designate(Rect2i(37, 9, 1, 1)).ok)   # reachable, farther
-	ses.inventory.spawn_ground(&"dirt", 50.0, Vector2i(25, 9))       # d=9 to pillar, d=12 to (37, 9)
+	# Fixture corrected by the Colony Agent (fix round 2): (37, 9) lies behind the
+	# 4-tall pillar and is unreachable from x < 30 too (NavGrid: no path, search
+	# exhausted). The reachable, farther zone tile is put on the NPC's side.
+	assert_true(ses.stockpiles.designate(Rect2i(13, 9, 1, 1)).ok)   # reachable, farther
+	ses.inventory.spawn_ground(&"dirt", 50.0, Vector2i(25, 9))       # d=9 to pillar, d=12 to (13, 9)
 	ses.colony.spawn_npc(Vector2i(5, 9))
-	var stored := _run(4000, func() -> bool: return ses.inventory.ground_kg_at(Vector2i(37, 9)) > 49.0)
+	var stored := _run(4000, func() -> bool: return ses.inventory.ground_kg_at(Vector2i(13, 9)) > 49.0)
 	assert_true(stored, "stack hauled into the reachable zone tile; items %s, jobs %s" % [
 			ses.inventory.to_snapshot()["items"], _jobs_text()])
 
@@ -364,9 +364,6 @@ func test_items_fall_through_ladders_and_into_stockpile() -> void:
 ## job" on a ladder the stack stays at (20, 17) in mid-air (no floor below);
 ## it only falls if some later terrain change happens in that column.
 func test_drop_from_ladder_mid_shaft_does_not_float() -> void:
-	pending("BUG QA-9: stacks put down by an NPC on a ladder mid-shaft float (no gravity on drop)")
-	return
-	@warning_ignore("unreachable_code")
 	_setup(Vector2i(40, 30))
 	ses.grid.apply_edit(Rect2i(20, 10, 1, 12), WorldGrid.Edit.DIG)
 	for y in range(10, 22):
