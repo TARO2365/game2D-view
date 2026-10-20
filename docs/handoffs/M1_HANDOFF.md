@@ -53,6 +53,12 @@ entry point that M2 jobs will call. `DesignationMap` lives in `src/jobs/` for M2
 | Mobile export | — | **NOT RUN** (no Android/iOS toolchain) |
 | Godot editor GUI | — | **NOT RUN** manually |
 
+> **Correction (2026-10-20, found in M2 QA as QA-11):** the M1 version of `tools/web_smoke.mjs` did not kill the
+> headless Edge process tree on Windows, so a later run could attach to the still-running browser. The M1
+> "browser restart" evidence therefore proves persistence across a **page reload**, not necessarily a full
+> browser restart. The tool was fixed in M2 (`e599cf0`) and a genuine browser-restart persistence check passed in
+> M2 QA (`docs/qa/M2_QA_REPORT.md`).
+
 ## 5. Bugs found and fixed during QA
 1. New World dialog was transparent (menu text showed through) → opaque panel + dimmed backdrop.
 2. Ctrl+S also panned the camera down (S = pan key) → camera ignores keys while Ctrl/Alt/Meta held or a text field has focus; regression test added.
