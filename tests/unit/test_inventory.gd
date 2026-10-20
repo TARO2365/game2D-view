@@ -219,6 +219,7 @@ func test_random_walk_conservation() -> void:
 		if r != null and r.ok:
 			ok_count += 1
 		var errs := inv.check_conservation()
+		errs.append_array(inv.verify_indexes())
 		if not errs.is_empty():
 			fail_test("step %d op %d: %s" % [step, op, errs])
 			return

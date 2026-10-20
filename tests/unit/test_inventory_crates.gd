@@ -193,6 +193,10 @@ func test_random_walk_conservation_with_crates() -> void:
 			if op >= 6:
 				crate_ops += 1
 		var errs := inv.check_conservation()
+		errs.append_array(inv.verify_indexes())
+		var naive := _naive_mismatch(jobs, crates)
+		if not naive.is_empty():
+			errs.append(naive)
 		if not errs.is_empty():
 			fail_test("step %d op %d: %s" % [step, op, errs])
 			return
@@ -222,6 +226,79 @@ func test_random_walk_conservation_with_crates() -> void:
 	assert_eq(inv2.load_snapshot(bytes_to_var(var_to_bytes(snap))), 0)
 	assert_eq(inv2.to_snapshot(), snap)
 	assert_eq(inv2.check_conservation(), [] as Array[String])
+	assert_eq(inv2.verify_indexes(), [] as Array[String], "indexes rebuilt on load")
+	for c: String in crates:
+		assert_eq(inv2.crate_kg(c), inv.crate_kg(c))
+	for x in 6:
+		assert_eq(inv2.ground_kg_at(Vector2i(x, 9)), inv.ground_kg_at(Vector2i(x, 9)))
+
+
+## Indexed queries must equal a full scan in id order, bit for bit (the
+## pre-M3-QA-6 implementation). Returns "" when everything matches.
+func _naive_mismatch(jobs: Array, crates: Array) -> String:
+	var all := inv.all_items()
+	var ground := {}
+	var keyed := {}
+	for it in all:
+		if it.holder == Inventory.Holder.GROUND:
+			if not ground.has(it.tile):
+				ground[it.tile] = []
+			ground[it.tile].append(it)
+		elif it.holder == Inventory.Holder.SITE or it.holder == Inventory.Holder.CRATE:
+			var k := "%d|%s" % [it.holder, it.holder_id]
+			if not keyed.has(k):
+				keyed[k] = []
+			keyed[k].append(it)
+	for x in range(-1, 7):
+		var t := Vector2i(x, 9)
+		var want: Array = ground.get(t, [])
+		if _ids_of(inv.items_at(t)) != _ids_of(want) or inv.ground_kg_at(t) != _sum(want):
+			return "ground %s differs from a full scan" % t
+	for j: String in jobs:
+		var want: Array = keyed.get("%d|%s" % [Inventory.Holder.SITE, j], [])
+		if _ids_of(inv.site_items(j)) != _ids_of(want) or inv.site_kg(j) != _sum(want):
+			return "site %s differs from a full scan" % j
+	for c: String in crates:
+		var want: Array = keyed.get("%d|%s" % [Inventory.Holder.CRATE, c], [])
+		if _ids_of(inv.crate_items(c)) != _ids_of(want) or inv.crate_kg(c) != _sum(want):
+			return "crate %s differs from a full scan" % c
+	return ""
+
+
+func _ids_of(list: Array) -> Array:
+	var out := []
+	for it: ItemStack in list:
+		out.append(it.id)
+	return out
+
+
+func _sum(list: Array) -> float:
+	var s := 0.0
+	for it: ItemStack in list:
+		s += it.kg
+	return s
+
+
+func test_returned_arrays_are_copies() -> void:
+	var a := _carry(&"rock", 50.0, "npc:1")
+	inv.store_in_crate("npc:1", "bld:1")
+	inv.spawn_ground(&"dirt", 5.0, Vector2i(3, 9))
+	inv.crate_items("bld:1").clear()
+	inv.items_at(Vector2i(3, 9)).clear()
+	inv.all_items().clear()
+	assert_eq(inv.crate_items("bld:1").size(), 1)
+	assert_eq(inv.items_at(Vector2i(3, 9)).size(), 1)
+	assert_eq(inv.all_items().size(), 2)
+	assert_eq(inv.crate_items("bld:1")[0].id, a)
+	assert_eq(inv.verify_indexes(), [] as Array[String])
+
+
+func test_verify_indexes_detects_tampering() -> void:
+	var g := inv.spawn_ground(&"dirt", 5.0, Vector2i(3, 9))
+	inv.ground_kg_at(Vector2i(3, 9))  # builds the cache
+	assert_eq(inv.verify_indexes(), [] as Array[String])
+	inv.get_item(g).tile = Vector2i(4, 9)  # illegal outside Inventory: index is now stale
+	assert_false(inv.verify_indexes().is_empty())
 
 
 func test_crate_items_round_trip() -> void:
