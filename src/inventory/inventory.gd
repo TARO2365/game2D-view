@@ -256,20 +256,24 @@ func to_snapshot() -> Dictionary:
 
 ## Restores from a snapshot, skipping invalid entries (never crashes).
 ## The spawned ledger is rebuilt as total + consumed so conservation holds
-## even when junk entries were dropped.
-func load_snapshot(s: Dictionary) -> void:
+## even when junk entries were dropped. Returns the number of dropped
+## entries: callers (save loading, QA) must treat > 0 as material loss.
+func load_snapshot(s: Dictionary) -> int:
 	_items.clear()
 	_carried.clear()
 	_spawned.clear()
 	_consumed.clear()
+	var dropped := 0
 	var items_v: Variant = s.get("items")
 	if typeof(items_v) == TYPE_ARRAY:
 		for e: Variant in items_v:
 			var it := _item_from(e)
 			if it == null or _items.has(it.id):
+				dropped += 1
 				continue
 			if it.holder == Holder.NPC:
 				if _carried.has(it.holder_id):
+					dropped += 1
 					continue  # one stack per NPC
 				_carried[it.holder_id] = it.id
 			_items[it.id] = it
@@ -280,6 +284,7 @@ func load_snapshot(s: Dictionary) -> void:
 	for m in _consumed:
 		_spawned[m] = float(_spawned.get(m, 0.0)) + float(_consumed[m])
 	items_changed.emit("")
+	return dropped
 
 
 func _item_from(e: Variant) -> ItemStack:

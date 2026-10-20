@@ -31,7 +31,7 @@ func test_round_trip_through_bytes() -> void:
 	assert_eq(typeof(restored), TYPE_DICTIONARY)
 	var inv2 := Inventory.new(StableIdAllocator.new())
 	watch_signals(inv2)
-	inv2.load_snapshot(restored)
+	assert_eq(inv2.load_snapshot(restored), 0, "clean round trip drops nothing")
 	assert_signal_emitted(inv2, "items_changed")
 	assert_eq(inv2.to_snapshot(), snap)
 	assert_eq(var_to_bytes(inv2.to_snapshot()), bytes, "byte-identical re-save")
@@ -91,7 +91,7 @@ func test_load_sanitizes_junk() -> void:
 		"spawned": {"dirt": 1.0e9},
 		"consumed": {"rock": 15.0, "dirt": -4.0, "": 3.0, "iron_ore": "x"},
 	}
-	inv.load_snapshot(junk)
+	assert_eq(inv.load_snapshot(junk), 14, "every rejected entry is counted (Lead: loss must be detectable)")
 	var kept := []
 	for it in inv.all_items():
 		kept.append(it.id)

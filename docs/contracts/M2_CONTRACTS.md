@@ -81,6 +81,14 @@ func load_snapshot(s: Dictionary) -> void
 ```
 Inventory does **not** know reservations (JobManager owns them) and never merges stacks in M2.
 
+**As implemented (merged 2026-10-20):** `Inventory.load_snapshot` and `StockpileZones.load_snapshot` return
+`int` = entries dropped (> 0 means data loss; save loading reports it). Extra helpers:
+`Inventory.check_conservation() -> Array[String]`, `StockpileZones.booked_tile(job_id)` / `booked_kg` /
+`is_valid_tile` / `count`, `ConstructionDefs.accepts(kind, material)`, `ConstructionDefs.KIND_BUILD_WALL/LADDER`.
+Capacity bookings are **stored** in StockpileZones but their **lifecycle** belongs to JobManager; removing a zone
+tile or a terrain change silently drops its booking — JobManager must check `booked_tile(job_id)` before dropping.
+`pick_up` result data: `item_id`, `kg`, `split`, `source_id`. `spawn_ground` returns `""` on invalid input.
+
 ## 4. Stockpiles (Systems Agent) — `src/inventory/stockpile_zones.gd`
 ```gdscript
 class_name StockpileZones extends RefCounted
