@@ -55,7 +55,7 @@ static func generate(world_seed: int, size: Vector2i, registry: TileRegistry) ->
 	for x in [0, w - 1]:
 		for y in range(surface[x], h):
 			t[y * w + x] = TileRegistry.BEDROCK
-	grid.tiles = t
+	grid.tiles = t  # structures stay as allocated by WorldGrid (all NONE)
 	grid.surface_y = surface
 	return grid
 

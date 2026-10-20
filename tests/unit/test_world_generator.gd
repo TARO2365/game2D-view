@@ -1,7 +1,7 @@
 extends GutTest
 
 const SIZE := Vector2i(160, 96)
-## Golden value: world hash for seed 12345, Medium, GEN_VERSION 1.
+## Golden value: terrain hash for seed 12345, Medium, GEN_VERSION 1.
 ## If this changes without a GEN_VERSION bump, existing saves break.
 const GOLDEN_MEDIUM_12345 := "84324cbea13c57196b5bafcd3edd62d17709d12b95563d1266deb0bb03620a8d"
 
@@ -62,8 +62,10 @@ func test_medium_world_has_all_ores_and_golden_hash() -> void:
 		counts[v] = counts.get(v, 0) + 1
 	for id in [TileRegistry.DIRT, TileRegistry.ROCK, TileRegistry.IRON_ORE, TileRegistry.GOLD_ORE, TileRegistry.CRYSTAL]:
 		assert_gt(counts.get(id, 0), 0, "tile %d present" % id)
-	gut.p("medium seed 12345 hash = %s" % g.world_hash())
-	assert_eq(g.world_hash(), GOLDEN_MEDIUM_12345)
+	gut.p("medium seed 12345 terrain hash = %s" % g.terrain_hash())
+	assert_eq(g.terrain_hash(), GOLDEN_MEDIUM_12345)
+	assert_eq(g.structures.size(), g.tiles.size(), "structure layer allocated")
+	assert_eq(g.structures.count(WorldGrid.Structure.NONE), g.structures.size(), "no structures generated")
 
 
 func test_seed_from_text() -> void:
