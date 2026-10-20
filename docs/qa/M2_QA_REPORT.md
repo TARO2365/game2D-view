@@ -122,6 +122,13 @@ on (20, y) with air below. Expected: it lands on the shaft floor (like terrain-t
 - Real mobile/touch: NOT RUN (out of M2 scope).
 - Windows desktop export in this round: NOT RUN.
 
+## 9b. Lead addendum (after QA round 2)
+QA-8 and QA-9 were fixed by the Colony Agent (`b67a7cf`) and verified by QA's own repro tests in
+`tests/qa/test_qa_fixes.gd` (pending removed; one QA-8 fixture tile corrected because the original "reachable" tile
+was behind a 4-tall pillar) plus Lead runs: run_tests 279/279, run_stress 4/4, no leak warnings. QA-11 fixed in
+`tools/web_smoke.mjs` (`e599cf0`). The test runner now fails on unloadable test scripts (`eaf2345`). No separate
+QA round was run on these last fixes.
+
 ## 10. Recommendation
 All 8 acceptance criteria PASS on 25e5ad0, QA-1..QA-6 are fixed and verified, and there is no session leak.
 **Recommendation: fix QA-8 first, then close M2.** QA-8 is small and contained in hauling, but it can leave items

@@ -23,4 +23,6 @@
 | OQ-13 | UX | Touch target sizes (SpeedBar uses 56×44 px placeholder). | UX prototype | OPEN |
 | OQ-14 | Save | "One world": does creating a new world overwrite the old one, or is New World disabled while a save exists? | M1 | RESOLVED → D-014 (max 3 worlds, delete one to create more) |
 | OQ-16 | Spec | Spec §11 still says "One world … do not assume multiple named save slots". D-014 (max 3 worlds) supersedes it; spec text should be updated in v0.2 (owner edit). Also unclear: may worlds be renamed by the player? Web storage quota × 3 worlds (ties to OQ-07). | Before M1 closes | OPEN |
+| OQ-20 | Perf | Web first launch in a fresh browser profile ran at 1–2 FPS for the whole first world (headless Edge, software rendering); later worlds ~39 FPS. Likely shader compilation without cache. Needs a real-GPU check; consider shader pre-warm on the loading screen. | Before M11 / Web release | OPEN |
+| OQ-21 | Sim | Placeholder balance from M2: carry 200 kg, drop 50 kg/tile, stockpile 1000 kg/tile, walk 5 ticks/tile, ladder 25 kg dirt/rock, wall 50 kg rock. | Balance pass | PLACEHOLDER |
 | OQ-15 | Sim | Tick rate 10 Hz and cadence 1/5/20 ticks are placeholders; real values need profiling (spec §17). | M2 profiling | PLACEHOLDER |
