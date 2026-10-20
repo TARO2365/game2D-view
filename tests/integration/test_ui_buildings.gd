@@ -87,6 +87,19 @@ func test_placement_orders_building_and_reports_failures() -> void:
 	assert_eq(session.build_orders.count(), 1)
 
 
+## M3-QA-5: the preview re-checks when the world changes under a still pointer.
+func test_preview_turns_red_when_world_changes_under_pointer() -> void:
+	var t := _crate_spot()
+	game.start_placement(&"crate")
+	assert_true(game.tools.update_preview(t).ok)
+	assert_true(session.buildings.place(&"crate", t, {&"rock": 50.0}).ok)
+	assert_false(game.tools.preview_result.ok, "red after a building appears")
+	assert_true(session.buildings.remove(session.buildings.building_at(t)).ok)
+	assert_true(game.tools.preview_result.ok, "green again")
+	assert_true(session.grid.apply_edit(Rect2i(t, Vector2i.ONE), WorldGrid.Edit.BUILD_WALL).ok)
+	assert_false(game.tools.preview_result.ok, "red after terrain changes")
+
+
 func test_placement_exits_with_escape_and_right_click() -> void:
 	game.start_placement(&"table")
 	var e := InputEventKey.new()

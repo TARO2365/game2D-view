@@ -42,6 +42,23 @@ var _click_travel := 0.0
 func setup(s: WorldSession, px: int) -> void:
 	session = s
 	tile_px = px
+	# The cached placement check depends on terrain, buildings, building
+	# orders and tile orders: re-check when any of them changes (M3-QA-5).
+	var refresh := func(_r: Rect2i) -> void: refresh_preview()
+	session.grid.tiles_changed.connect(refresh)
+	session.buildings.buildings_changed.connect(refresh)
+	session.build_orders.orders_changed.connect(refresh)
+	session.designations.designations_changed.connect(refresh)
+
+
+## Drops the cached placement check and recomputes it at the same origin
+## (pointer did not move but the world under it changed).
+func refresh_preview() -> void:
+	if preview_result == null:
+		return
+	preview_result = null
+	if tool == Tool.PLACE_BUILDING and not place_key.is_empty():
+		update_preview(preview_origin)
 
 
 func set_tool(t: Tool) -> void:
