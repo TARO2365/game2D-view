@@ -19,6 +19,8 @@ Status values: **APPROVED** (owner said yes), **DELEGATED** (owner asked Lead to
 | D-012 | 2026-10-19 | Minimum browser/device specs deferred; must be fixed before M1 closes. | DELEGATED | Q10 |
 | D-013 | 2026-10-19 | Core contracts: `CommandResult` (all commands), `StableIdAllocator` ("category:n", never reused, saved), `SimulationClock` (fixed step, Pause/1x/2x/3x, Fast/Normal/Slow cadence; numeric rates are PLACEHOLDERS). | DELEGATED | M0 |
 | D-014 | 2026-10-20 | **Up to 3 saved worlds** may be stored (each = its own folder with manual + autosave per D-007). **Only one world is loaded/played at a time** — never simulated concurrently. Creating a 4th is blocked until the player deletes one; delete requires explicit confirmation in UI. Supersedes spec §11 "One world" (spec text update pending, OQ-16). | APPROVED | Owner answer to OQ-14 |
+| D-015 | 2026-10-20 | Player never edits terrain directly (ONI-style). Dig/Build tools create **designations** (`DesignationMap`, saved); NPC jobs execute them from M2. Debug builds have an F9 "instant edit" for testing only. | APPROVED | Owner, M1 plan P-1 option A |
+| D-016 | 2026-10-20 | M1 plan approved: world presets S 384×192 / M 512×256 (default) / L 1024×384; fog of war → M7; save = `meta.json` + compressed binary with checksum; gen-version mismatch refused; min spec per plan P-6; New World dialog has a name field (required, ≤32 chars, unique). | APPROVED | Owner |
 
 ## Rationale notes
 - **D-003 clearance 3:** concept sheet shows NPC ≈ 2.5 tiles and ordinary zombie ≈ 3 tiles. A 2-tile corridor

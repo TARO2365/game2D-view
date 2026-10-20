@@ -8,6 +8,10 @@ Runs `godot --headless --import`, then GUT over `tests/unit` and `tests/integrat
 Exit code 0 = all passed; non-zero = failure (verified with a deliberate failing canary test in M0).
 JUnit report: `build/test_results.xml`.
 
+Benchmark: `godot --headless --path . -s res://tools/bench_world.gd`
+Web end-to-end: `node tools/serve_web.js` then `node tools/web_smoke.mjs <steps.json> <out_dir> [profile_dir]`
+(headless Edge via DevTools Protocol; reusing `profile_dir` tests that saves survive a browser restart).
+
 ## Test layers
 | Layer | Location | Purpose | From |
 |---|---|---|---|
@@ -23,6 +27,12 @@ JUnit report: `build/test_results.xml`.
 - A failing test blocks milestone closure. Flaky tests are bugs.
 - Anything not executed is reported as **NOT RUN** with the reason.
 - Each milestone adds regression tests for every bug fixed.
+
+## M1 regression checklist
+- [x] 76 GUT tests (incl. golden world hash, save corruption/fallback, 3-world limit, D-015 orders-don't-edit-terrain)
+- [x] Benchmark recorded (handoff §4)
+- [x] Web: create → orders → F9 dig → save → browser restart → load; Web hash = PC hash
+- [ ] Touch/pinch on real device — NOT RUN (OQ-19)
 
 ## M0 regression checklist
 - [x] 25 GUT tests (unit 20, integration 5)

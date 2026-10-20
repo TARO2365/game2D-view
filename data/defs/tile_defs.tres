@@ -1,0 +1,79 @@
+[gd_resource type="Resource" script_class="TileRegistry" format=3]
+
+[ext_resource type="Script" path="res://src/world/tile_registry.gd" id="1_reg"]
+[ext_resource type="Script" path="res://src/world/tile_def.gd" id="2_def"]
+
+[sub_resource type="Resource" id="Tile_air"]
+script = ExtResource("2_def")
+id = 0
+key = &"air"
+display_name = "Air"
+placeholder_color = Color(0, 0, 0, 0)
+solid = false
+diggable = false
+hardness = 0.0
+
+[sub_resource type="Resource" id="Tile_dirt"]
+script = ExtResource("2_def")
+id = 1
+key = &"dirt"
+display_name = "Dirt"
+placeholder_color = Color(0.45, 0.31, 0.2, 1)
+hardness = 1.0
+
+[sub_resource type="Resource" id="Tile_rock"]
+script = ExtResource("2_def")
+id = 2
+key = &"rock"
+display_name = "Rock"
+placeholder_color = Color(0.37, 0.36, 0.35, 1)
+hardness = 2.0
+
+[sub_resource type="Resource" id="Tile_iron"]
+script = ExtResource("2_def")
+id = 3
+key = &"iron_ore"
+display_name = "Iron Ore"
+placeholder_color = Color(0.36, 0.42, 0.55, 1)
+hardness = 2.5
+placeholder_speckle_light = true
+
+[sub_resource type="Resource" id="Tile_gold"]
+script = ExtResource("2_def")
+id = 4
+key = &"gold_ore"
+display_name = "Gold Ore"
+placeholder_color = Color(0.78, 0.6, 0.18, 1)
+hardness = 2.5
+placeholder_speckle_light = true
+
+[sub_resource type="Resource" id="Tile_crystal"]
+script = ExtResource("2_def")
+id = 5
+key = &"crystal"
+display_name = "Crystal"
+placeholder_color = Color(0.58, 0.33, 0.8, 1)
+hardness = 3.0
+placeholder_speckle_light = true
+
+[sub_resource type="Resource" id="Tile_bedrock"]
+script = ExtResource("2_def")
+id = 6
+key = &"bedrock"
+display_name = "Bedrock"
+placeholder_color = Color(0.14, 0.13, 0.13, 1)
+diggable = false
+hardness = 99.0
+
+[sub_resource type="Resource" id="Tile_concrete"]
+script = ExtResource("2_def")
+id = 7
+key = &"concrete"
+display_name = "Concrete Wall"
+placeholder_color = Color(0.6, 0.6, 0.58, 1)
+diggable = false
+hardness = 4.0
+
+[resource]
+script = ExtResource("1_reg")
+defs = Array[Resource]([SubResource("Tile_air"), SubResource("Tile_dirt"), SubResource("Tile_rock"), SubResource("Tile_iron"), SubResource("Tile_gold"), SubResource("Tile_crystal"), SubResource("Tile_bedrock"), SubResource("Tile_concrete")])

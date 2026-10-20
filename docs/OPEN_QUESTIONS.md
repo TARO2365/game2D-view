@@ -10,12 +10,15 @@
 | OQ-03 | Infra | Oxygen is per room (§2/§4). Undefined: oxygen in open caves, corridors, unenclosed space, and partially breached rooms. | Before M4 | OPEN |
 | OQ-04 | Combat | Horde every 5 days + boss every 10–15 days can coincide (e.g. day 10, 15). Stack, offset, or merge? | Before M5 | OPEN |
 | OQ-05 | Inventory | Ownership of items while carried by an NPC or inside a vehicle cargo hold. Proposal: Inventory owns all quantities in "containers" (stockpile, NPC hands, vehicle hold); others request transfers. | Before M2 | PROPOSAL |
-| OQ-06 | World | Cross-platform determinism of seeded generation (float noise on PC vs Web WASM). Plan: golden-hash test run on both. | M1 | OPEN — validate |
-| OQ-07 | Save | Web persistence (`user://` → IndexedDB) size quota and browser eviction; export/import not approved. | M1 feasibility | OPEN |
+| OQ-06 | World | Cross-platform determinism of seeded generation (float noise on PC vs Web WASM). | M1 | RESOLVED — seed 12345 hash identical on PC and Web (M1 handoff) |
+| OQ-07 | Save | Web persistence (`user://` → IndexedDB) size quota and browser eviction; export/import not approved. | M1 feasibility | PARTLY RESOLVED — saves survive browser restart; ~10 KB per save so quota is not a concern now. Browser "clear site data" still deletes worlds (inform players later). |
 | OQ-08 | Art | Texture filter nearest vs linear, zoom range, mipmaps — concept art is high-detail painterly/pixel hybrid. | Before M1 art import | OPEN |
 | OQ-09 | Combat | Exact sizes of boss/large creatures vs clearance class "large = 4+". | M5/M7 | OPEN |
 | OQ-10 | Difficulty | Relaxed/Standard/Hardcore presets and Colony Prestige are proposals only, not locked. | Later | NOT LOCKED |
-| OQ-11 | QA | Web build timing (ticks/sec at 1x/2x/3x) not measured: test browser pane was hidden so `requestAnimationFrame` did not run. | M1 | NOT RUN |
+| OQ-11 | QA | Web build timing. | M1 | PARTLY RESOLVED — `tools/web_smoke.mjs` runs the Web build in headless Edge; game runs (~41–45 FPS on software rendering). Real-GPU timing still unmeasured. |
+| OQ-17 | UI | Thai text: Web builds have no system fonts, so Thai UI needs a bundled Thai-capable font (license check). UI is English until decided. | Before UI localization | OPEN |
+| OQ-18 | UI | "Last played" time zone on Web may show UTC. | Minor | OPEN |
+| OQ-19 | Input | Touch drag/pinch implemented but untested on a real phone/tablet; one finger also emulates mouse, so pinch during Dig tool may start a selection. | Before mobile polish | OPEN |
 | OQ-12 | Legal | Originality review vs Oxygen Not Included UI/mechanics. | Before M11 | OPEN |
 | OQ-13 | UX | Touch target sizes (SpeedBar uses 56×44 px placeholder). | UX prototype | OPEN |
 | OQ-14 | Save | "One world": does creating a new world overwrite the old one, or is New World disabled while a save exists? | M1 | RESOLVED → D-014 (max 3 worlds, delete one to create more) |

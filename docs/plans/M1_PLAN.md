@@ -26,7 +26,12 @@
 | P-4 | Save format: `meta.json` (human-readable) + compressed binary payload (`FileAccess.open_compressed`, `store_var`) with `save_version = 1`. | Small files, fast load, versioned. |
 | P-5 | Load with mismatched `GEN_VERSION` is refused with a clear message (no migration yet). | Migration strategy starts when the generator changes. |
 | P-6 | Min spec (D-012): PC Windows 10/11 64-bit with OpenGL 3.3; Web: current desktop Chrome/Edge/Firefox; mobile browser: Android Chrome (best effort); iOS Safari "untested" until a device is available. | Needed before M1 closes. |
-| P-7 | World name auto-generated ("World 1…3" + seed); rename deferred (OQ-16). | Keeps scope small. |
+| P-7 | ~~World name auto-generated~~ **Owner 2026-10-20: New World dialog has a name field** (pre-filled suggestion, required, max 32 chars, duplicate names rejected). Renaming an existing world is still not in scope (OQ-16). | Owner change |
+
+**Owner response 2026-10-20:** P-2, P-3, P-4, P-5, P-6 APPROVED. P-7 changed as above.
+**P-1 replaced by option A (APPROVED):** Dig/Build tools only place **designations** (player orders, saved with the world);
+terrain does not change until NPCs do the work in M2 (ONI-style). A **debug-build-only** "instant edit" toggle (F9)
+applies edits directly so M1 terrain-edit/render/save paths can be tested. Release builds cannot enable it. → D-015.
 
 ## 3. Acceptance criteria
 1. Same seed + gen version ⇒ identical world hash (tested); different seeds ⇒ different hash.

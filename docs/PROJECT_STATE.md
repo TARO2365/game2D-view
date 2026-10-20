@@ -1,18 +1,18 @@
 # PROJECT_STATE.md
 
-**Updated:** 2026-10-20 | **M0:** Closed (owner approved) | **M1:** Authorized; plan `docs/plans/M1_PLAN.md` awaiting owner approval — no M1 code yet
+**Updated:** 2026-10-20 | **M0:** Closed | **M1:** In review (awaiting owner closure) | **Next authorized:** none
 
-## What exists
-- Godot 4.7.2 project (`project.godot`), GL Compatibility renderer, main scene `scenes/main.tscn`.
-- Core contracts in `src/core/`: `CommandResult`, `StableIdAllocator`, `SimulationClock`, `ScaleConfig`.
-- Minimal UI shell: `SpeedBar` (Pause/1x/2x/3x + tick counter).
-- Module folders for all spec §10 boundaries (empty, `.gitkeep`).
-- GUT 9.7.1 test harness, 25 tests passing.
-- Export presets: Web (single-threaded), Windows Desktop.
-- Docs: CLAUDE.md, spec, this file, ROADMAP, DECISIONS, OPEN_QUESTIONS, TEST_PLAN, ASSET_CONVENTIONS, MILESTONE_HANDOFF.
+## What exists (playable)
+- App shell: main menu with up to 3 stored worlds (one played at a time), New World dialog (name, seed, size), delete with confirmation.
+- Finite seeded world (Small/Medium/Large) with dirt, rock, iron, gold, crystal, bedrock border; deterministic on PC and Web.
+- Chunk-streamed rendering with runtime placeholder tiles; camera pan/zoom.
+- Player **orders** (dig / build wall / cancel) — terrain only changes via debug F9 instant edit until NPCs arrive in M2 (D-015).
+- Manual save, autosave (5 min + on Menu), atomic writes with `.bak` fallback, only changed chunks saved.
+- Speed control Pause/1x/2x/3x, debug HUD (FPS, tick, chunks, orders, world hash, cursor tile).
+- 76 automated tests; benchmark tool; headless-browser Web smoke tool.
 
 ## What does NOT exist yet
-No world, tiles, NPCs, jobs, saving, or any gameplay. No production art.
+NPCs, jobs, hauling, inventory/materials, ladders, navigation, rooms, deconstruction, caves, fog of war, real art, sound, Thai UI.
 
 ## Repository
 https://github.com/TARO2365/game2D-view (branch `main`). Git auth via Git Credential Manager; `gh` CLI not logged in.
@@ -20,7 +20,7 @@ https://github.com/TARO2365/game2D-view (branch `main`). Git auth via Git Creden
 ## Environment (owner machine)
 - Godot: `%LOCALAPPDATA%\Programs\Godot\` (+ export templates in `%APPDATA%\Godot\export_templates\4.7.2.stable`)
 - GitHub CLI: `%LOCALAPPDATA%\Programs\gh\bin\gh.exe` (both added to user PATH)
-- Node.js available for `tools/serve_web.js`.
+- Node.js 24 (Web server + headless Edge smoke test). Microsoft Edge used for Web smoke tests.
 
 ## Next session
-Read CLAUDE.md. Wait for owner approval of `docs/plans/M1_PLAN.md` (incl. proposals P-1…P-7), then implement M1.
+Read CLAUDE.md and `docs/MILESTONE_HANDOFF.md`. Wait for owner to close M1 and authorize M2; then propose the M2 plan first.

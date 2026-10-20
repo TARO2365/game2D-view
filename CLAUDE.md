@@ -43,5 +43,10 @@ powershell -File tools/run_tests.ps1                  # import + full GUT suite,
 powershell -File tools/export.ps1 -Preset Web         # build/web/
 powershell -File tools/export.ps1 -Preset "Windows Desktop"
 node tools/serve_web.js 8060                          # http://localhost:8060
+node tools/web_smoke.mjs steps.json out_dir [profile] # drive Web build in headless Edge (screenshots)
+godot --headless --path . -s res://tools/bench_world.gd   # generation/save benchmark
 ```
+Any change to `WorldGenerator` output must bump `GEN_VERSION` (golden-hash test guards this).
+The browser pane in the desktop app may be hidden (no frames render) — use `web_smoke.mjs` for Web checks.
+Write files with UTF-8 (PowerShell 5.1 `Get-Content`/`Set-Content` corrupt non-ASCII; use the Edit tool).
 Godot binary: `%LOCALAPPDATA%\Programs\Godot\Godot_v4.7.2-stable_win64_console.exe` (override with `$env:GODOT`).
