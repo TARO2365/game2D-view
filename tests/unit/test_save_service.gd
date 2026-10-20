@@ -44,7 +44,7 @@ func test_round_trip_restores_everything() -> void:
 	var l: WorldSession = r.data["session"]
 	assert_eq(l.grid.world_hash(), s.grid.world_hash())
 	assert_eq(l.clock.tick_index, s.clock.tick_index)
-	assert_eq(l.ids.peek_next(&"npc"), 2)
+	assert_eq(l.ids.peek_next(&"npc"), s.ids.peek_next(&"npc"))
 	assert_eq(l.designations.to_snapshot(), s.designations.to_snapshot())
 	assert_eq(l.grid.modified_chunks(), s.grid.modified_chunks(), "edited chunks stay tracked")
 	assert_false(r.data["fell_back"])
@@ -55,9 +55,10 @@ func test_v2_round_trip_with_ladders_items_and_stockpiles() -> void:
 	_play(s, 10)
 	var air := Vector2i(50, s.grid.surface_y[50] - 1)
 	assert_true(s.grid.apply_structure(air, WorldGrid.Structure.LADDER).ok)
+	# Carrying mid-job is covered by tests/unit/test_colony_snapshot.gd; a carry
+	# without a job is (correctly) undone by JobManager re-validation on load.
 	s.inventory.spawn_ground(&"dirt", 50.0, Vector2i(10, 33))
-	var carried := s.inventory.spawn_ground(&"rock", 30.0, Vector2i(11, 33))
-	s.inventory.pick_up(carried, "npc:1")
+	s.inventory.spawn_ground(&"rock", 30.0, Vector2i(11, 33))
 	var floor_x := 60
 	s.stockpiles.designate(Rect2i(floor_x, s.grid.surface_y[floor_x] - 1, 1, 1))
 	assert_true(SaveService.save(s, dir, SaveService.Kind.MANUAL).ok)
@@ -65,11 +66,13 @@ func test_v2_round_trip_with_ladders_items_and_stockpiles() -> void:
 	assert_true(r.ok, str(r))
 	var l: WorldSession = r.data["session"]
 	assert_eq(r.data["migrated_from"], 2)
-	assert_eq(r.data["dropped"], {"designations": 0, "inventory": 0, "stockpiles": 0})
+	assert_eq(r.data["dropped"], {"designations": 0, "inventory": 0, "stockpiles": 0, "colony": 0, "jobs": 0})
+	assert_eq(l.colony.count(), s.colony.count())
 	assert_true(l.grid.is_ladder(air))
 	assert_eq(l.grid.world_hash(), s.grid.world_hash())
 	assert_eq(l.inventory.to_snapshot(), s.inventory.to_snapshot())
-	assert_eq(l.inventory.carried_by("npc:1").kg, 30.0)
+	assert_eq(l.inventory.check_conservation(), [] as Array[String])
+	assert_eq(l.jobs.check_invariants(), [] as Array[String])
 	assert_eq(l.stockpiles.count(), 1)
 	assert_eq(l.ids.peek_next(&"item"), s.ids.peek_next(&"item"), "item ids continue, never reused")
 
@@ -97,6 +100,9 @@ func test_v1_save_migrates() -> void:
 	assert_eq(l.grid.terrain_hash(), s.grid.terrain_hash())
 	assert_eq(l.designations.count(), s.designations.count())
 	assert_eq(l.inventory.all_items().size(), 0)
+	assert_eq(l.colony.count(), Colony.START_NPCS, "migrated M1 world gets the starting colony")
+	assert_eq(l.jobs.job_count(), l.designations.count(), "every old order becomes a job")
+	assert_eq(l.jobs.check_invariants(), [] as Array[String])
 	# Re-saving writes v2.
 	assert_true(SaveService.save(l, dir, SaveService.Kind.AUTO).ok)
 	assert_eq(SaveService.read_file(dir.path_join("autosave.save"))["payload"]["save_version"], 2)

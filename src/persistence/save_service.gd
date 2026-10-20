@@ -48,6 +48,8 @@ static func build_payload(session: WorldSession) -> Dictionary:
 		"designations": session.designations.to_snapshot(),
 		"inventory": session.inventory.to_snapshot(),
 		"stockpiles": session.stockpiles.to_snapshot(),
+		"colony": session.colony.to_snapshot(),
+		"jobs": session.jobs.to_snapshot(),
 		"world_hash": grid.world_hash(),
 	}
 
@@ -158,11 +160,17 @@ static func session_from_payload(p: Dictionary, meta: Dictionary, registry: Tile
 	var s := WorldSession.from_grid(world_meta, grid)
 	s.clock.load_snapshot(p.get("clock", {}))
 	s.ids.load_snapshot(p.get("ids", {}))
+	# Load order matters (contract §7): orders, items, zones, colony, then jobs,
+	# which re-validates every reservation against the others.
 	var dropped := {
 		"designations": s.designations.load_snapshot(p.get("designations", {})),
 		"inventory": s.inventory.load_snapshot(p.get("inventory", {})) if version >= 2 else 0,
 		"stockpiles": s.stockpiles.load_snapshot(p.get("stockpiles", {})) if version >= 2 else 0,
+		"colony": s.colony.load_snapshot(p.get("colony", {})) if version >= 2 else 0,
 	}
+	if version == 1:
+		s.colony.spawn_starting_npcs()  # M1 worlds had no NPCs
+	dropped["jobs"] = s.jobs.load_snapshot(p.get("jobs", {}) if version >= 2 else {})
 	return CommandResult.success({"session": s, "dropped": dropped, "migrated_from": version})
 
 
