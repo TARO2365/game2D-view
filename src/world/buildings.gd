@@ -48,7 +48,9 @@ func footprint(key: StringName, origin: Vector2i) -> Rect2i:
 
 ## Failure codes: unknown_key, out_of_bounds, blocked (tile not air, ladder or
 ## building there), no_floor (a tile under the bottom row is not solid),
-## no_support (door: tile above the top is not solid).
+## needs_soil (floor is solid but not one of def.floor_materials, e.g. farm
+## plot on concrete/ore), no_support (door: tile above the top is not solid).
+## The same floor/soil/support rules decide support loss (building_lost).
 func can_place(key: StringName, origin: Vector2i) -> CommandResult:
 	var d := def(key)
 	if d == null:
@@ -66,6 +68,9 @@ func can_place(key: StringName, origin: Vector2i) -> CommandResult:
 	if not _has_support(d, r):
 		if d.needs_floor and not _has_floor(r):
 			return CommandResult.failure(&"no_floor", "%s needs solid floor under it" % d.display_name)
+		if d.needs_floor and not _has_floor_material(d, r):
+			return CommandResult.failure(&"needs_soil", "%s needs a floor of %s" % [d.display_name,
+					" or ".join(PackedStringArray(d.floor_materials))])
 		return CommandResult.failure(&"no_support",
 				"%s must stand in a wall gap (solid tile above it)" % d.display_name)
 	return CommandResult.success({"rect": r})
@@ -250,8 +255,23 @@ func _has_floor(r: Rect2i) -> bool:
 	return true
 
 
+## Every floor tile is one of d.floor_materials (tile keys). Empty list = any
+## solid tile. Out-of-world floor never counts as soil.
+func _has_floor_material(d: BuildingDef, r: Rect2i) -> bool:
+	if d.floor_materials.is_empty():
+		return true
+	for x in range(r.position.x, r.end.x):
+		var p := Vector2i(x, r.end.y)
+		if not grid.in_bounds(p):
+			return false
+		var td := grid.registry.get_def(grid.get_tile(p))
+		if td == null or not d.floor_materials.has(td.key):
+			return false
+	return true
+
+
 func _has_support(d: BuildingDef, r: Rect2i) -> bool:
-	if d.needs_floor and not _has_floor(r):
+	if d.needs_floor and not (_has_floor(r) and _has_floor_material(d, r)):
 		return false
 	if d.is_door:
 		for x in range(r.position.x, r.end.x):
