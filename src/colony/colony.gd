@@ -20,11 +20,38 @@ const NAME_TRIES := 64
 const ID_CATEGORY := &"npc"
 const NO_TILE := Vector2i(-1, -1)
 
+# --- M4a needs (all PLACEHOLDER, D-028 / M4a contract §7) ---------------
+const HUNGER_PER_TICK := 100.0 / GameTime.TICKS_PER_DAY            # -100 / day
+const STAMINA_AWAKE_PER_TICK := 100.0 / (16 * GameTime.TICKS_PER_HOUR)  # -100 / 16 h awake
+const STAMINA_BED_PER_TICK := 100.0 / (6 * GameTime.TICKS_PER_HOUR)    # +100 / 6 h in bed
+const BEDROOM_FACTOR := 1.5                                          # +50 % in a bedroom
+const FLOOR_FACTOR := 0.5                                            # x0.5 on the floor
+const HEALTH_LOSS_PER_TICK := 100.0 / (GameTime.TICKS_PER_DAY / 2)  # starving or exhausted
+const HEALTH_GAIN_PER_TICK := 100.0 / GameTime.TICKS_PER_DAY
+const HUNGRY := 40.0           # eats below this
+const CRITICAL_HUNGER := 10.0  # refuses work, eats before anything
+const EXHAUSTED := 15.0        # sleeps below this whatever the schedule
+const RESTED := 100.0          # wakes (when the schedule allows) at this stamina
+const RECOVER_HEALTH := 20.0   # a collapsed NPC above this gets up
+const DEATH_TICKS := 6000      # collapsed this long (health <= RECOVER_HEALTH) = death (P-2)
+const EAT_TICKS_TABLE := 20
+const EAT_TICKS_STANDING := 40
+const TABLE_NUTRITION_FACTOR := 1.1  # a meal at a table fills a bit more
+const FOOD_RETRY_TICKS := 100  # no reachable food: look again after this
+const COLONY_CHECK_EVERY := 20 # beds + colony-wide alerts cadence (ticks)
+const WALK_OK := 0
+const WALK_WAIT := 1
+const WALK_FAIL := 2
+
 var grid: WorldGrid
 var nav: NavGrid
 var jobs: JobManager
 var ids: StableIdAllocator
 var world_seed: int
+## M4a (attach_m4a): needs, schedules, beds, alerts. Off = M2/M3 behaviour.
+var needs_enabled: bool = false
+var alerts: AlertService = null
+var rooms: RoomMap = null
 
 var _npcs: Dictionary = {}       # npc id -> Npc (spawn order)
 var _full_names: Dictionary = {} # full name -> npc id
@@ -32,6 +59,9 @@ var _nicknames: Dictionary = {}  # nickname -> npc id
 var _spawn_counter: int = 0
 var _tick: int = 0
 var _rotation: int = 0
+var _table_users: Dictionary = {}  # table building id -> npc id eating there
+var _sleep_factor: Dictionary = {} # npc id -> stamina factor while asleep (bed / bedroom / floor)
+var _deaths: int = 0
 
 
 func _init(world_grid: WorldGrid, nav_grid: NavGrid, job_manager: JobManager,
@@ -42,6 +72,19 @@ func _init(world_grid: WorldGrid, nav_grid: NavGrid, job_manager: JobManager,
 	ids = id_alloc
 	world_seed = seed_value
 	jobs.attach_colony(self)
+
+
+## M4a wiring (WorldSession, once after construction): turns on needs,
+## schedules, eating, sleeping, collapse/death and alerts. JobManager must
+## get attach_m4a too (food, farms, kitchens).
+func attach_m4a(alert_service: AlertService, room_map: RoomMap) -> void:
+	alerts = alert_service
+	rooms = room_map
+	needs_enabled = true
+
+
+func deaths() -> int:
+	return _deaths
 
 
 # --- Queries ------------------------------------------------------------
@@ -82,7 +125,7 @@ func spawn_npc(tile: Vector2i) -> Npc:
 	_pick_names(n, rng)
 	n.tile = tile
 	n.prev_tile = tile
-	n.work_enabled = {&"dig": true, &"build": true, &"haul": true}
+	n.work_enabled = _default_work()
 	_npcs[n.id] = n
 	jobs.on_npcs_changed()
 	npcs_changed.emit()
@@ -131,6 +174,8 @@ func command_move(npc_id: String, tile: Vector2i) -> CommandResult:
 	var n: Npc = _npcs.get(npc_id)
 	if n == null:
 		return CommandResult.failure(&"unknown_npc", "No NPC %s" % npc_id)
+	if not n.is_ok():
+		return CommandResult.failure(&"collapsed", "%s has collapsed and cannot move" % n.nickname)
 	if not grid.in_bounds(tile):
 		return CommandResult.failure(&"out_of_bounds", "Target is outside the world")
 	var groups := _stand_groups_near(tile)
@@ -149,6 +194,7 @@ func command_move(npc_id: String, tile: Vector2i) -> CommandResult:
 	if goal == NO_TILE:
 		return CommandResult.failure(&"unreachable", "%s cannot reach %s" % [n.nickname, tile])
 	jobs.release_npc(n)
+	_end_activity(n)
 	n.command_target = goal
 	n._path = path
 	_refresh_state(n)
@@ -161,6 +207,8 @@ func command_stop(npc_id: String) -> CommandResult:
 	var n: Npc = _npcs.get(npc_id)
 	if n == null:
 		return CommandResult.failure(&"unknown_npc", "No NPC %s" % npc_id)
+	if not n.is_ok():
+		return CommandResult.failure(&"collapsed", "%s has collapsed" % n.nickname)
 	var jid := jobs.release_npc(n)
 	n.command_target = NO_TILE
 	n._path.clear()
@@ -190,20 +238,88 @@ func set_work_enabled(npc_id: String, work: StringName, on: bool) -> CommandResu
 	return CommandResult.success({"work": work, "on": on})
 
 
+## 24 hourly Npc.Activity values (WORK / SLEEP / FREE).
+func set_schedule(npc_id: String, hours: PackedByteArray) -> CommandResult:
+	var n: Npc = _npcs.get(npc_id)
+	if n == null:
+		return CommandResult.failure(&"unknown_npc", "No NPC %s" % npc_id)
+	var check := _check_schedule(hours)
+	if not check.ok:
+		return check
+	n.schedule = hours.duplicate()
+	npcs_changed.emit()
+	return CommandResult.success({"npc_id": npc_id})
+
+
+func set_schedule_all(hours: PackedByteArray) -> CommandResult:
+	var check := _check_schedule(hours)
+	if not check.ok:
+		return check
+	for n: Npc in _npcs.values():
+		n.schedule = hours.duplicate()
+	npcs_changed.emit()
+	return CommandResult.success({"count": _npcs.size()})
+
+
+## bed_id "" = automatic (the next free bed). A bed owned by another NPC is
+## taken over (that NPC gets another bed automatically).
+func assign_bed(npc_id: String, bed_id: String) -> CommandResult:
+	var n: Npc = _npcs.get(npc_id)
+	if n == null:
+		return CommandResult.failure(&"unknown_npc", "No NPC %s" % npc_id)
+	if bed_id.is_empty():
+		n.bed_id = ""
+		_assign_beds()
+		npcs_changed.emit()
+		return CommandResult.success({"bed_id": n.bed_id})
+	if not _is_bed(bed_id):
+		return CommandResult.failure(&"not_bed", "%s is not a bed" % bed_id)
+	for o: Npc in _npcs.values():
+		if o != n and o.bed_id == bed_id:
+			o.bed_id = ""
+	n.bed_id = bed_id
+	_assign_beds()
+	npcs_changed.emit()
+	return CommandResult.success({"bed_id": bed_id})
+
+
+func _check_schedule(hours: PackedByteArray) -> CommandResult:
+	if hours.size() != 24:
+		return CommandResult.failure(&"invalid_schedule", "A schedule has 24 hours")
+	for v in hours:
+		if not (v in [Npc.Activity.WORK, Npc.Activity.SLEEP, Npc.Activity.FREE]):
+			return CommandResult.failure(&"invalid_schedule", "Unknown activity %d" % v)
+	return CommandResult.success()
+
+
 # --- Simulation ---------------------------------------------------------
 
 func update(tick: int) -> void:
 	_tick = tick
+	if needs_enabled and tick % COLONY_CHECK_EVERY == 0:
+		_assign_beds()
+		_colony_alerts()
 	var list := _npcs.values()
 	var n := list.size()
 	if n == 0:
 		return
 	_rotation = (_rotation + 1) % n
 	for i in n:
-		_update_npc(list[(i + _rotation) % n], tick)
+		var npc: Npc = list[(i + _rotation) % n]
+		if _npcs.has(npc.id):  # may have died this tick
+			_update_npc(npc, tick)
 
 
 func _update_npc(n: Npc, tick: int) -> void:
+	if needs_enabled:
+		_tick_needs(n, tick)
+		if not _npcs.has(n.id):
+			return  # died
+		if not n.is_ok():
+			if not nav.can_stand(n.tile):
+				_fall(n)
+			n.state = &"collapsed"
+			return
 	if n._moving:
 		n.move_progress += 1.0 / n._step_ticks
 		if n.move_progress < 0.999:
@@ -214,6 +330,37 @@ func _update_npc(n: Npc, tick: int) -> void:
 	if not nav.can_stand(n.tile):
 		_fall(n)
 		return
+	var may_work := true
+	if needs_enabled:
+		var want := _desired(n, tick)
+		if want == &"eat" or want == &"sleep":
+			if not n.job_id.is_empty():
+				jobs.release_npc(n)  # a need pre-empts work (reservations released)
+				n._path.clear()
+			n.command_target = NO_TILE
+			if n._activity != want:
+				_end_activity(n)
+				n._activity = want
+				n._phase = &""
+			if not n._path.is_empty():
+				_start_step(n)
+				return
+			if want == &"eat":
+				_do_eat(n, tick)
+			else:
+				_do_sleep(n, tick)
+			return
+		if n._activity != &"":
+			_end_activity(n)
+		if want == &"free" or n.hunger < CRITICAL_HUNGER:
+			# Free time (or too hungry to work): no jobs; player moves still run.
+			may_work = false
+			if not n.job_id.is_empty():
+				jobs.release_npc(n)
+			if n._path.is_empty() and n.command_target == NO_TILE:
+				n.work_progress = 0.0
+				n.state = &"idle"
+				return
 	if not n._path.is_empty() and not n.job_id.is_empty() and jobs.needs_new_route(n):
 		n._path.clear()  # destination changed (e.g. stockpile booking lost): ask the job again
 	if not n._path.is_empty():
@@ -231,7 +378,7 @@ func _update_npc(n: Npc, tick: int) -> void:
 		return
 	n.work_progress = 0.0
 	n.state = &"idle"
-	if tick < n._next_assign_tick or nav.budget_left(tick) <= 0:
+	if not may_work or tick < n._next_assign_tick or nav.budget_left(tick) <= 0:
 		return
 	var r := jobs.try_assign(n, tick)
 	if r.ok:
@@ -373,6 +520,329 @@ func _on_job_released(n: Npc) -> void:
 	_refresh_state(n)
 
 
+# --- M4a: needs, activities, collapse -------------------------------------
+
+## What the NPC should do now, in priority order (M4a §7): critical hunger
+## -> eat; sleep (schedule or exhausted; a sleeper wakes only when rested
+## and the schedule no longer says Sleep); hungry and food around -> eat;
+## the schedule's Work -> jobs; else free time.
+func _desired(n: Npc, tick: int) -> StringName:
+	var sched: int = n.schedule[GameTime.hour(tick)] if n.schedule.size() == 24 else Npc.Activity.WORK
+	var food_ok := n._activity == &"eat" or (tick >= n._food_retry_tick and jobs.food_exists())
+	if n.hunger < CRITICAL_HUNGER and food_ok:
+		return &"eat"
+	if n._activity == &"eat" and food_ok:
+		return &"eat"  # finish the meal first
+	if n._activity == &"sleep" and not (n.stamina >= RESTED and sched != Npc.Activity.SLEEP):
+		return &"sleep"
+	if sched == Npc.Activity.SLEEP or n.stamina < EXHAUSTED:
+		return &"sleep"
+	if n.hunger < HUNGRY and food_ok:
+		return &"eat"
+	return &"work" if sched == Npc.Activity.WORK else &"free"
+
+
+func _tick_needs(n: Npc, tick: int) -> void:
+	n.hunger = maxf(0.0, n.hunger - HUNGER_PER_TICK)
+	if not n.is_ok():
+		n.stamina = minf(100.0, n.stamina + STAMINA_BED_PER_TICK * FLOOR_FACTOR)  # lying down
+	elif n._activity == &"sleep" and n._phase == &"asleep":
+		n.stamina = minf(100.0, n.stamina + STAMINA_BED_PER_TICK * float(_sleep_factor.get(n.id, FLOOR_FACTOR)))
+	else:
+		n.stamina = maxf(0.0, n.stamina - STAMINA_AWAKE_PER_TICK)
+	if n.hunger <= 0.0 or n.stamina <= 0.0:
+		n.health = maxf(0.0, n.health - HEALTH_LOSS_PER_TICK)
+	else:
+		n.health = minf(100.0, n.health + HEALTH_GAIN_PER_TICK)
+	if n.is_ok():
+		if n.health <= 0.0:
+			_collapse(n, tick)
+	elif n.health > RECOVER_HEALTH:
+		n.condition = Npc.CONDITION_OK  # gets up
+		n._collapsed_since = -1
+		n.state = &"idle"
+		npcs_changed.emit()
+	elif tick - n._collapsed_since >= DEATH_TICKS:
+		_die(n)
+		return
+	_npc_alerts(n)
+
+
+func _collapse(n: Npc, tick: int) -> void:
+	jobs.release_npc(n)
+	_end_activity(n)
+	jobs.on_npc_down(n)
+	n.condition = Npc.CONDITION_COLLAPSED
+	n._collapsed_since = tick
+	n.command_target = NO_TILE
+	n._path.clear()
+	n._moving = false
+	n.prev_tile = n.tile
+	n.move_progress = 0.0
+	n.state = &"collapsed"
+	npcs_changed.emit()
+
+
+## Death (P-2): carried items dropped, every reservation released, body
+## removed (names stay used). Raises a "died" alert.
+func _die(n: Npc) -> void:
+	jobs.release_npc(n)
+	_end_activity(n)
+	jobs.on_npc_down(n)
+	n.condition = Npc.CONDITION_DEAD
+	n.bed_id = ""
+	_npcs.erase(n.id)
+	_deaths += 1
+	if alerts != null:
+		alerts.clear_prefix(n.id + "/")
+		alerts.set_alert(n.id + "/died", AlertService.Severity.EMERGENCY,
+				"%s has died" % n.nickname, n.tile, n.id)
+	jobs.on_npcs_changed()
+	jobs.sync_feed_jobs()
+	npcs_changed.emit()
+
+
+## Stops eating / sleeping: drops a carried meal where the NPC stands,
+## releases a reserved one and the table.
+func _end_activity(n: Npc) -> void:
+	if n._activity == &"":
+		return
+	jobs.release_food(n)
+	if not n._table_id.is_empty() and _table_users.get(n._table_id, "") == n.id:
+		_table_users.erase(n._table_id)
+	n._table_id = ""
+	n._activity = &""
+	n._phase = &""
+	n._eat_ticks = 0
+	n._in_bed = false
+	_sleep_factor.erase(n.id)
+	if not n._moving:
+		n._path.clear()
+
+
+func _do_eat(n: Npc, tick: int) -> void:
+	for _step in 3:
+		match n._phase:
+			&"", &"fetch":
+				n._phase = &"fetch"
+				var held := jobs.inventory.carried_by(n.id)
+				if held != null and held.id == n._food_item:
+					n._phase = &"table"
+					continue
+				if jobs.reserve_food(n).is_empty():
+					_give_up_eating(n, tick, FOOD_RETRY_TICKS)
+					return
+				var goals := jobs.food_goals(n)
+				if goals.is_empty():
+					jobs.food_unreachable(n)
+					_give_up_eating(n, tick, 1)
+					return
+				if goals.has(n.tile):
+					if not jobs.take_food(n):
+						_give_up_eating(n, tick, 1)
+						return
+					n._phase = &"table"
+					continue
+				if _walk_to(n, goals, tick) == WALK_FAIL:
+					jobs.food_unreachable(n)
+					_give_up_eating(n, tick, 1)
+				return
+			&"table":
+				if n._table_id.is_empty():
+					n._table_id = _claim_table(n)
+				if n._table_id.is_empty():
+					n._phase = &"eating"
+					n._eat_ticks = EAT_TICKS_STANDING
+					continue
+				var goals := jobs.building_goals(n._table_id)
+				if goals.has(n.tile):
+					n._phase = &"eating"
+					n._eat_ticks = EAT_TICKS_TABLE
+					continue
+				var w := WALK_FAIL if goals.is_empty() else _walk_to(n, goals, tick)
+				if w == WALK_FAIL:
+					_release_table(n)  # unreachable table: eat standing
+					n._phase = &"eating"
+					n._eat_ticks = EAT_TICKS_STANDING
+					continue
+				return
+			&"eating":
+				n.state = &"eating"
+				n._eat_ticks -= 1
+				if n._eat_ticks <= 0:
+					jobs.eat(n, TABLE_NUTRITION_FACTOR if not n._table_id.is_empty() else 1.0)
+					_end_activity(n)
+					n.state = &"idle"
+				return
+			_:
+				n._phase = &"fetch"
+
+
+func _give_up_eating(n: Npc, tick: int, retry: int) -> void:
+	_end_activity(n)
+	n._food_retry_tick = tick + retry
+	n.state = &"idle"
+
+
+func _do_sleep(n: Npc, tick: int) -> void:
+	match n._phase:
+		&"", &"go":
+			n._phase = &"go"
+			var bed := n.bed_id if _is_bed(n.bed_id) else ""
+			if bed.is_empty():
+				_fall_asleep(n, false)
+				return
+			var spots := _bed_spots(bed)
+			if spots.has(n.tile):
+				_fall_asleep(n, true)
+				return
+			var w := WALK_FAIL if spots.is_empty() else _walk_to(n, spots, tick)
+			if w == WALK_FAIL:
+				_fall_asleep(n, false)  # bed out of reach: floor
+		&"asleep":
+			n.state = &"sleeping"
+		_:
+			n._phase = &"go"
+
+
+func _fall_asleep(n: Npc, in_bed: bool) -> void:
+	n._phase = &"asleep"
+	n._in_bed = in_bed
+	var f := FLOOR_FACTOR
+	if in_bed:
+		f = 1.0
+		if rooms != null and rooms.room_at(n.tile).get("type", &"") == &"bedroom":
+			f = BEDROOM_FACTOR
+	_sleep_factor[n.id] = f
+	n.state = &"sleeping"
+
+
+## Budgeted path to goals for an activity: WALK_OK (walking), WALK_WAIT (no
+## search budget this tick) or WALK_FAIL (no path).
+func _walk_to(n: Npc, goals: Array[Vector2i], tick: int) -> int:
+	if not nav.consume_budget(tick):
+		n.state = &"waiting"
+		return WALK_WAIT
+	var path := jobs.find_path_for(n, goals)
+	if path.is_empty():
+		return WALK_FAIL
+	n._path = path
+	_start_step(n)
+	return WALK_OK
+
+
+func _claim_table(n: Npc) -> String:
+	if jobs.buildings == null:
+		return ""
+	var best := ""
+	var best_d := 0
+	for bid in jobs.buildings.all_ids():
+		var b := jobs.buildings.get_building(bid)
+		if b.get("key", &"") != &"table" or _table_users.has(bid):
+			continue
+		var o: Vector2i = b["origin"]
+		var d := absi(o.x - n.tile.x) + absi(o.y - n.tile.y)
+		if best.is_empty() or d < best_d:
+			best = bid
+			best_d = d
+	if not best.is_empty():
+		_table_users[best] = n.id
+	return best
+
+
+func _release_table(n: Npc) -> void:
+	if _table_users.get(n._table_id, "") == n.id:
+		_table_users.erase(n._table_id)
+	n._table_id = ""
+
+
+func _is_bed(bid: String) -> bool:
+	return not bid.is_empty() and jobs.buildings != null \
+			and jobs.buildings.get_building(bid).get("key", &"") == &"bed"
+
+
+## Standable tiles of a bed's footprint (the NPC lies on the bed).
+func _bed_spots(bid: String) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var b := jobs.buildings.get_building(bid)
+	if b.is_empty():
+		return out
+	var r := jobs.buildings.footprint(b["key"], b["origin"])
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			if nav.can_stand(Vector2i(x, y)):
+				out.append(Vector2i(x, y))
+	return out
+
+
+## Every NPC without a (valid) bed gets a free one; owners stay unique.
+func _assign_beds() -> void:
+	if jobs.buildings == null:
+		return
+	var owned := {}
+	for n: Npc in _npcs.values():
+		if not _is_bed(n.bed_id) or owned.has(n.bed_id):
+			n.bed_id = ""
+		else:
+			owned[n.bed_id] = n.id
+	var free: Array[String] = []
+	for bid in jobs.buildings.all_ids():
+		if _is_bed(bid) and not owned.has(bid):
+			free.append(bid)
+	for n: Npc in _npcs.values():
+		if n.bed_id.is_empty() and not free.is_empty():
+			n.bed_id = free.pop_front()
+
+
+func _npc_alerts(n: Npc) -> void:
+	if alerts == null:
+		return
+	_flag(n, "hungry", n.is_ok() and n.hunger < HUNGRY and n.hunger > 0.0,
+			AlertService.Severity.GENERAL, "%s is hungry")
+	_flag(n, "starving", n.is_ok() and n.hunger <= 0.0, AlertService.Severity.IMPORTANT, "%s is starving")
+	_flag(n, "exhausted", n.is_ok() and n.stamina < EXHAUSTED, AlertService.Severity.GENERAL,
+			"%s is exhausted")
+	_flag(n, "collapsed", n.condition == Npc.CONDITION_COLLAPSED, AlertService.Severity.EMERGENCY,
+			"%s has collapsed")
+
+
+func _flag(n: Npc, what: String, on: bool, severity: AlertService.Severity, text: String) -> void:
+	if on == n._alert_flags.has(what):
+		return
+	var key := "%s/%s" % [n.id, what]
+	if on:
+		n._alert_flags[what] = true
+		alerts.set_alert(key, severity, text % n.nickname, n.tile, n.id)
+	else:
+		n._alert_flags.erase(what)
+		alerts.clear(key)
+
+
+func _colony_alerts() -> void:
+	if alerts == null:
+		return
+	if jobs.materials != null and jobs.food_kg_total() <= 0.0:
+		alerts.set_alert("colony/no_food", AlertService.Severity.IMPORTANT, "No food left")
+	else:
+		alerts.clear("colony/no_food")
+	var bedless := 0
+	for n: Npc in _npcs.values():
+		if n.bed_id.is_empty():
+			bedless += 1
+	if bedless > 0:
+		alerts.set_alert("colony/no_free_bed", AlertService.Severity.GENERAL,
+				"%d colonist(s) without a bed" % bedless)
+	else:
+		alerts.clear("colony/no_free_bed")
+
+
+func _default_work() -> Dictionary:
+	var we := {}
+	for k: StringName in Npc.WORK_KEYS:
+		we[k] = true
+	return we
+
+
 # --- Persistence --------------------------------------------------------
 
 func to_snapshot() -> Dictionary:
@@ -391,8 +861,22 @@ func to_snapshot() -> Dictionary:
 			"command_target": n.command_target,
 			"ignore_job_id": n._ignore_job_id,
 			"ignore_until": n._ignore_until,
+			# M4a
+			"hunger": n.hunger,
+			"stamina": n.stamina,
+			"health": n.health,
+			"condition": String(n.condition),
+			"schedule": n.schedule.duplicate(),
+			"bed_id": n.bed_id,
+			"activity": String(n._activity),
+			"phase": String(n._phase),
+			"food_item": n._food_item,
+			"eat_ticks": n._eat_ticks,
+			"table_id": n._table_id,
+			"in_bed": n._in_bed,
+			"collapsed_since": n._collapsed_since,
 		})
-	return {"npcs": list, "spawn_counter": _spawn_counter, "tick": _tick}
+	return {"npcs": list, "spawn_counter": _spawn_counter, "tick": _tick, "deaths": _deaths}
 
 
 ## Restores NPCs (paths are recomputed). NPCs on tiles that are no longer
@@ -403,12 +887,16 @@ func load_snapshot(s: Dictionary) -> int:
 	_npcs.clear()
 	_full_names.clear()
 	_nicknames.clear()
+	_table_users.clear()
+	_sleep_factor.clear()
 	nav.invalidate_all()
 	var dropped := 0
 	var sc: Variant = s.get("spawn_counter", 0)
 	var tk: Variant = s.get("tick", 0)
+	var dc: Variant = s.get("deaths", 0)
 	_spawn_counter = maxi(0, sc) if typeof(sc) == TYPE_INT else 0
 	_tick = tk if typeof(tk) == TYPE_INT else 0
+	_deaths = maxi(0, dc) if typeof(dc) == TYPE_INT else 0
 	var list_v: Variant = s.get("npcs")
 	if typeof(list_v) == TYPE_ARRAY:
 		for e: Variant in list_v:
@@ -425,6 +913,12 @@ func load_snapshot(s: Dictionary) -> int:
 			_npcs[n.id] = n
 			_full_names[n.full_name] = n.id
 			_nicknames[n.nickname] = n.id
+			if not n._table_id.is_empty() and not _table_users.has(n._table_id):
+				_table_users[n._table_id] = n.id
+			else:
+				n._table_id = ""
+			if n._activity == &"sleep" and n._phase == &"asleep":
+				_fall_asleep(n, n._in_bed)  # recompute the bed / bedroom factor
 	_spawn_counter = maxi(_spawn_counter, _npcs.size())
 	npcs_changed.emit()
 	return dropped
@@ -454,7 +948,7 @@ func _npc_from(e: Variant) -> Npc:
 	var ct: Variant = d.get("command_target", NO_TILE)
 	n.command_target = ct if typeof(ct) == TYPE_VECTOR2I and (ct == NO_TILE or grid.in_bounds(ct)) else NO_TILE
 	var we: Variant = d.get("work_enabled", {})
-	n.work_enabled = {&"dig": true, &"build": true, &"haul": true}
+	n.work_enabled = _default_work()
 	if typeof(we) == TYPE_DICTIONARY:
 		for k: StringName in Npc.WORK_KEYS:
 			var v: Variant = (we as Dictionary).get(String(k), true)
@@ -463,7 +957,45 @@ func _npc_from(e: Variant) -> Npc:
 	var iu: Variant = d.get("ignore_until", -1)
 	n._ignore_job_id = ij if typeof(ij) == TYPE_STRING else ""
 	n._ignore_until = iu if typeof(iu) == TYPE_INT else -1
+	# M4a (older snapshots: fed, rested, healthy, default schedule).
+	n.hunger = _num(d.get("hunger"), 100.0)
+	n.stamina = _num(d.get("stamina"), 100.0)
+	n.health = _num(d.get("health"), 100.0)
+	var cond: Variant = d.get("condition", "ok")
+	n.condition = StringName(cond) if typeof(cond) == TYPE_STRING \
+			and StringName(cond) in [Npc.CONDITION_OK, Npc.CONDITION_COLLAPSED] else Npc.CONDITION_OK
+	var sch: Variant = d.get("schedule")
+	if typeof(sch) == TYPE_PACKED_BYTE_ARRAY and _check_schedule(sch).ok:
+		n.schedule = (sch as PackedByteArray).duplicate()
+	for k: String in ["bed_id", "food_item", "table_id"]:
+		if typeof(d.get(k, "")) != TYPE_STRING:
+			return null
+	n.bed_id = d.get("bed_id", "")
+	n._food_item = d.get("food_item", "")
+	n._table_id = d.get("table_id", "")
+	var act: Variant = d.get("activity", "")
+	var ph: Variant = d.get("phase", "")
+	n._activity = StringName(act) if typeof(act) == TYPE_STRING and StringName(act) in [&"", &"eat", &"sleep"] else &""
+	n._phase = StringName(ph) if typeof(ph) == TYPE_STRING and n._activity != &"" else &""
+	var et: Variant = d.get("eat_ticks", 0)
+	n._eat_ticks = et if typeof(et) == TYPE_INT else 0
+	var ib: Variant = d.get("in_bed", false)
+	n._in_bed = ib if typeof(ib) == TYPE_BOOL else false
+	var cs: Variant = d.get("collapsed_since", -1)
+	n._collapsed_since = cs if typeof(cs) == TYPE_INT else -1
+	if n.condition == Npc.CONDITION_COLLAPSED and n._collapsed_since < 0:
+		n._collapsed_since = _tick
+	if not n.is_ok():
+		n._activity = &""
+		n._phase = &""
 	return n
+
+
+static func _num(v: Variant, fallback: float) -> float:
+	if typeof(v) != TYPE_FLOAT and typeof(v) != TYPE_INT:
+		return fallback
+	var f := float(v)
+	return clampf(f, 0.0, 100.0) if is_finite(f) else fallback
 
 
 # --- Internals ----------------------------------------------------------

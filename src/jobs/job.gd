@@ -21,7 +21,14 @@ const KIND_BUILD := &"build"
 const KIND_HAUL := &"haul"
 const KIND_BUILDING := &"building"
 const KIND_DECONSTRUCT := &"deconstruct"
-const KINDS: Array[StringName] = [KIND_DIG, KIND_BUILD, KIND_HAUL, KIND_BUILDING, KIND_DECONSTRUCT]
+## M4a: plant / harvest a farm plot (order_id = farm building id).
+const KIND_FARM := &"farm"
+## M4a: haul the recipe input to a kitchen site, cook (order_id = kitchen id).
+const KIND_COOK := &"cook"
+## M4a: bring food to a collapsed NPC (order_id = that NPC's id).
+const KIND_FEED := &"feed"
+const KINDS: Array[StringName] = [KIND_DIG, KIND_BUILD, KIND_HAUL, KIND_BUILDING, KIND_DECONSTRUCT,
+		KIND_FARM, KIND_COOK, KIND_FEED]
 
 const PHASE_OPEN := &"open"
 const PHASE_FETCH := &"fetch"
@@ -85,19 +92,24 @@ func is_done() -> bool:
 	return phase == PHASE_DONE
 
 
-## Npc.work_enabled key: dig, build (build, building, deconstruct) or haul.
+## Npc.work_enabled key: dig, build (build, building, deconstruct), haul
+## (haul, feed), farm, cook.
 func work_type() -> StringName:
 	match kind:
 		KIND_DIG:
 			return KIND_DIG
-		KIND_HAUL:
+		KIND_HAUL, KIND_FEED:
 			return KIND_HAUL
+		KIND_FARM:
+			return KIND_FARM
+		KIND_COOK:
+			return KIND_COOK
 	return KIND_BUILD
 
 
 ## Jobs that need material delivered to a site.
 func needs_material() -> bool:
-	return kind == KIND_BUILD or kind == KIND_BUILDING
+	return kind == KIND_BUILD or kind == KIND_BUILDING or kind == KIND_COOK
 
 
 func to_dict() -> Dictionary:
