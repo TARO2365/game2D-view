@@ -3,7 +3,7 @@ extends RefCounted
 ## Shared placeholder UI styling: panel background, need bars, colours.
 ## PLACEHOLDER values until the UX/art pass.
 
-const PANEL_COLOR := Color(0.11, 0.1, 0.12, 0.96)
+const PANEL_COLOR := Color(0.11, 0.1, 0.12, 1.0)
 const PANEL_BORDER := Color(0.45, 0.4, 0.3)
 const TOUCH := 44.0
 const HUNGER_COLOR := Color(0.95, 0.65, 0.2)

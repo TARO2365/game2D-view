@@ -77,8 +77,13 @@ func _ready() -> void:
 	var st := HBoxContainer.new()
 	box.add_child(st)
 	state_label = _label(st)
+	state_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	state_label.clip_text = true
 	state_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	condition_label = _label(st)
+	condition_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	condition_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	condition_label.custom_minimum_size = Vector2(90, 0)
 	job_label = _label(box)
 	carry_label = _label(box)
 	var needs := GridContainer.new()
