@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://bjnbw08r42k5t"
+path="res://.godot/imported/item_crystal.png-dae6c495880d8ed9acbece806615e64a.image"
+
+[deps]
+
+source_file="res://assets/production/items/item_crystal.png"
+dest_files=["res://.godot/imported/item_crystal.png-dae6c495880d8ed9acbece806615e64a.image"]
+
+[params]
+

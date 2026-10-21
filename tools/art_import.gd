@@ -26,6 +26,9 @@ extends SceneTree
 ## importer="image" .import stub (ASSET_SPEC §9).
 
 const CELL := Vector2i(128, 192)      # ArtLibrary.NPC_CELL
+## Lying animations use a wider cell (ArtLibrary.cell_size).
+const WIDE_ANIMS: Array[StringName] = [&"sleep"]
+const WIDE_CELL := Vector2i(192, 192)
 const TILE := 64
 ## Head-top-to-feet height in the cell (px). The real top (helmet crown,
 ## hair tufts) sits a few px higher; tools may reach above it.
@@ -70,14 +73,15 @@ func _init() -> void:
 		return
 	var terrain: Dictionary = {}  # material -> Array[path]
 	var sheets: Array[Dictionary] = []
+	var sky_path := ""
 	for f in files:
 		var path := src_dir.path_join(f)
 		if f.begins_with("npc_") and f.get_extension().to_lower() in ["png", "webp", "jpg", "jpeg"]:
 			var info := _analyze_npc(path, f.get_basename())
 			if not info.is_empty():
 				sheets.append(info)
-		elif f.begins_with("terrain_") or f.begins_with("backwall_dug"):
-			var key := f.get_basename().trim_prefix("terrain_")
+		elif f.begins_with("terrain_") or f.begins_with("backwall_dug") or f.begins_with("background_wall"):
+			var key := f.get_basename().trim_prefix("terrain_").replace("background_wall", "backwall_dug")
 			var v := key.rfind("_v")
 			if v > 0:
 				key = key.substr(0, v)
@@ -88,11 +92,10 @@ func _init() -> void:
 			continue
 		elif f.get_basename() == "ladder":
 			_import_ladder(path)
-		elif f.get_basename() == "sky_surface":
-			var sky := _load(path)
-			sky.resize(roundi(sky.get_width() * 540.0 / sky.get_height()), 540, Image.INTERPOLATE_LANCZOS)
-			_save(sky, "backgrounds/sky_surface.png")
-			report.append("sky_surface -> backgrounds/sky_surface.png")
+		elif f.get_basename().begins_with("sky_surface"):
+			# sky_surface_v2 (batch 2) wins over sky_surface when both exist.
+			if sky_path == "" or f.get_basename() > sky_path.get_file().get_basename():
+				sky_path = path
 		elif f.begins_with("item_"):
 			_import_sprite(path, "items/%s.png" % f.get_basename(), Vector2i(64, 64), Vector2i(48, 40), true)
 		elif f.begins_with("building_"):
@@ -101,6 +104,11 @@ func _init() -> void:
 		elif f.begins_with("icon_"):
 			_import_sprite(path, "ui/%s.png" % f.get_basename(), Vector2i(64, 64), Vector2i(56, 56), false)
 	_import_npc_sheets(sheets)
+	if sky_path != "" and not measure_only:
+		var sky := _load(sky_path)
+		sky.resize(roundi(sky.get_width() * 540.0 / sky.get_height()), 540, Image.INTERPOLATE_LANCZOS)
+		_save(sky, "backgrounds/sky_surface.png")
+		report.append("%s -> backgrounds/sky_surface.png" % sky_path.get_file())
 	if not measure_only:
 		for key in terrain:
 			var paths: Array = terrain[key]
@@ -174,7 +182,9 @@ func _write_npc_sheet(s: Dictionary, line: String) -> void:
 	var rects: Array = s.rects
 	var metrics: Array = s.metrics
 	var base: String = s.base
-	var out := Image.create(CELL.x * rects.size(), CELL.y, false, Image.FORMAT_RGBA8)
+	var cs := cell_size(s.anim)
+	var wide: bool = s.anim in WIDE_ANIMS
+	var out := Image.create(cs.x * rects.size(), cs.y, false, Image.FORMAT_RGBA8)
 	var clipped_total := 0
 	for i in rects.size():
 		var r: Rect2i = rects[i]
@@ -187,13 +197,14 @@ func _write_npc_sheet(s: Dictionary, line: String) -> void:
 		frame.resize(fw, fh, Image.INTERPOLATE_LANCZOS)
 		_mask_foreign(frame, s.slice, s.slice.frames[i], orig.position.x, scale, k)
 		var feet_y: float = (float(m.feet) + 1.0) / k * scale
-		var cx: float = (float(m.cx) / k - orig.position.x) * scale
-		var dst := Vector2i(roundi(CELL.x / 2.0 - cx), roundi(CELL.y - feet_y))
-		var cell := Image.create(CELL.x, CELL.y, false, Image.FORMAT_RGBA8)
+		# Lying poses centre on the whole figure; standing ones on the torso.
+		var cx: float = (float(m.bbox_cx if wide else m.cx) / k - orig.position.x) * scale
+		var dst := Vector2i(roundi(cs.x / 2.0 - cx), roundi(cs.y - feet_y))
+		var cell := Image.create(cs.x, cs.y, false, Image.FORMAT_RGBA8)
 		cell.blit_rect(frame, Rect2i(Vector2i.ZERO, frame.get_size()), dst)
-		clipped_total += _count_clipped(frame, dst)
+		clipped_total += _count_clipped(frame, dst, cs)
 		_clean_sprite(cell)
-		out.blit_rect(cell, Rect2i(Vector2i.ZERO, CELL), Vector2i(i * CELL.x, 0))
+		out.blit_rect(cell, Rect2i(Vector2i.ZERO, cs), Vector2i(i * cs.x, 0))
 	var rel := "characters/%s.png" % base
 	_save(out, rel)
 	report.append(line + ("  CLIPPED %d px" % clipped_total if clipped_total > 0 else "") + " -> " + rel)
@@ -329,7 +340,19 @@ func _measure(sm: Image, r: Rect2i) -> Dictionary:
 			while b < r.end.x - 1 and data[row + (b + 1) * 4 + 3] >= ALPHA_SOLID:
 				b += 1
 			head_w = maxi(head_w, b - a + 1)
-	return {"top": float(top), "feet": float(feet), "cx": cx, "head_w": float(head_w)}
+	var bx: Array[int] = []
+	for y in range(top, feet + 1):
+		var row := (r.position.y + y) * w * 4
+		for x in range(r.position.x, r.end.x):
+			if data[row + x * 4 + 3] >= ALPHA_SOLID:
+				bx.append(x)
+				break
+		for x in range(r.end.x - 1, r.position.x - 1, -1):
+			if data[row + x * 4 + 3] >= ALPHA_SOLID:
+				bx.append(x)
+				break
+	var bbox_cx: float = (bx.min() + bx.max()) / 2.0 if not bx.is_empty() else cx
+	return {"top": float(top), "feet": float(feet), "cx": cx, "head_w": float(head_w), "bbox_cx": bbox_cx}
 
 
 ## Clears pixels of a scaled frame that belong to another frame's blob (or to
@@ -352,7 +375,7 @@ func _mask_foreign(frame: Image, sl: Dictionary, f: int, ox: int, scale: float, 
 	frame.set_data(fw, fh, false, Image.FORMAT_RGBA8, d)
 
 
-func _count_clipped(frame: Image, dst: Vector2i) -> int:
+func _count_clipped(frame: Image, dst: Vector2i, cs: Vector2i) -> int:
 	var n := 0
 	var data := frame.get_data()
 	var fw := frame.get_width()
@@ -360,7 +383,7 @@ func _count_clipped(frame: Image, dst: Vector2i) -> int:
 		for x in fw:
 			var px := dst.x + x
 			var py := dst.y + y
-			if (px < 0 or py < 0 or px >= CELL.x or py >= CELL.y) and data[(y * fw + x) * 4 + 3] >= ALPHA_SOLID:
+			if (px < 0 or py < 0 or px >= cs.x or py >= cs.y) and data[(y * fw + x) * 4 + 3] >= ALPHA_SOLID:
 				n += 1
 	return n
 
@@ -756,3 +779,7 @@ func _ensure_image_import(path: String) -> void:
 	var f := FileAccess.open(imp, FileAccess.WRITE)
 	f.store_string("[remap]\n\nimporter=\"image\"\ntype=\"Image\"\n" + (uid + "\n" if uid != "" else ""))
 	f.close()
+
+
+static func cell_size(anim: StringName) -> Vector2i:
+	return WIDE_CELL if anim in WIDE_ANIMS else CELL

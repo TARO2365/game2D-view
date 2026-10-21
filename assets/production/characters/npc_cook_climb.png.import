@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://dnex6khhb4p4t"
+path="res://.godot/imported/npc_cook_climb.png-a8215147ac1150212ef6d8fea7aec63c.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_cook_climb.png"
+dest_files=["res://.godot/imported/npc_cook_climb.png-a8215147ac1150212ef6d8fea7aec63c.image"]
+
+[params]
+

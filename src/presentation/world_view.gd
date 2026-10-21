@@ -7,6 +7,9 @@ extends Node2D
 const MARGIN_CHUNKS := 1
 const SKY_COLOR := Color(0.17, 0.14, 0.22)
 const BACKWALL_COLOR := Color(0.1, 0.08, 0.07)
+## Sky image scale and how many tiles below the average surface its bottom sits.
+const SKY_SCALE := 1.5
+const SKY_HORIZON_TILES := 1.0
 
 var grid: WorldGrid
 var tile_px := 64
@@ -58,25 +61,46 @@ func sky_texture() -> Texture2D:
 	return ArtLibrary.texture(ArtLibrary.background_path(&"sky_surface"))
 
 
-## Sky image at native size, repeated horizontally, its bottom edge on the
-## deepest surface row; each column is clipped at its own surface line. Above
-## the image the flat SKY_COLOR stays visible.
+## Sky image behind the surface; each column is clipped at its own surface line.
 func _draw_sky(sky: Texture2D) -> void:
 	var size := sky.get_size()
-	var bottom := 0
+	# The image (scaled by SKY_SCALE) sits with its horizon on the average
+	# surface line, repeated horizontally. Above it, its top row is stretched
+	# up to the world top; below it, its bottom row continues down to each
+	# column's surface — so there is never a flat band or a hard edge.
+	var sum := 0
 	for x in grid.width:
-		bottom = maxi(bottom, grid.surface_y[x])
-	var band_bottom := float(bottom * tile_px)
-	var band_top := band_bottom - size.y
+		sum += grid.surface_y[x]
+	var anchor := (float(sum) / grid.width + SKY_HORIZON_TILES) * tile_px
+	var s := SKY_SCALE
+	var top := anchor - size.y * s
+	var tile_w := size.x * s
 	for x in grid.width:
 		var x0 := float(x * tile_px)
-		var y0 := maxf(band_top, 0.0)
 		var y1 := float(grid.surface_y[x] * tile_px)
-		if y1 <= y0:
+		if y1 <= 0.0:
 			continue
-		var sx := fposmod(x0, size.x)
-		var w := minf(float(tile_px), size.x - sx)
-		draw_texture_rect_region(sky, Rect2(x0, y0, w, y1 - y0), Rect2(sx, y0 - band_top, w, y1 - y0))
+		var sx := fposmod(x0, tile_w)
+		var w := minf(float(tile_px), tile_w - sx)
+		_sky_column(sky, Rect2(x0, 0.0, w, y1), sx / s, top, s)
+		if w < tile_px:
+			_sky_column(sky, Rect2(x0 + w, 0.0, tile_px - w, y1), 0.0, top, s)
+
+
+func _sky_column(sky: Texture2D, dst: Rect2, src_x: float, top: float, s: float) -> void:
+	var h := sky.get_size().y
+	var sw := dst.size.x / s
+	var y0 := dst.position.y
+	var y1 := dst.end.y
+	if y0 < top:  # above the image: stretch its top row
+		draw_texture_rect_region(sky, Rect2(dst.position.x, y0, dst.size.x, minf(top, y1) - y0), Rect2(src_x, 0.0, sw, 1.0))
+	var a := maxf(y0, top)
+	var b := minf(y1, top + h * s)
+	if b > a:
+		draw_texture_rect_region(sky, Rect2(dst.position.x, a, dst.size.x, b - a), Rect2(src_x, (a - top) / s, sw, (b - a) / s))
+	if y1 > top + h * s:  # below the image: stretch its bottom row
+		var c := maxf(y0, top + h * s)
+		draw_texture_rect_region(sky, Rect2(dst.position.x, c, dst.size.x, y1 - c), Rect2(src_x, h - 1.0, sw, 1.0))
 
 
 func loaded_chunk_count() -> int:

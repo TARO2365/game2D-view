@@ -272,4 +272,6 @@ func test_art_hooks_use_production_files_when_present() -> void:
 	ArtLibrary.base_dir = old
 	ArtLibrary.clear_cache()
 	FS.rm_rf(art)
-	assert_null(game.building_view.texture_for(&"crate"), "no production art in the repo yet")
+	assert_eq(game.building_view.texture_for(&"crate") != null,
+			FileAccess.file_exists("res://assets/production/buildings/building_crate.png"),
+			"back on the repo's production art")

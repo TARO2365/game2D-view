@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://ct20evyqhv27q"
+path="res://.godot/imported/npc_miner_sleep.png-cc7744ceb12f1f75bcdd17596da34229.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_miner_sleep.png"
+dest_files=["res://.godot/imported/npc_miner_sleep.png-cc7744ceb12f1f75bcdd17596da34229.image"]
+
+[params]
+

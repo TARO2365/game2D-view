@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://dvbnj76e2a40l"
+path="res://.godot/imported/npc_scientist_fall.png-c94bea8f3c32c96ad3f73cdfc959c697.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_scientist_fall.png"
+dest_files=["res://.godot/imported/npc_scientist_fall.png-c94bea8f3c32c96ad3f73cdfc959c697.image"]
+
+[params]
+

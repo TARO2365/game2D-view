@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://ds0vjnitdoglj"
+path="res://.godot/imported/npc_miner_build.png-338e3c957f856201a456bff26337e914.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_miner_build.png"
+dest_files=["res://.godot/imported/npc_miner_build.png-338e3c957f856201a456bff26337e914.image"]
+
+[params]
+

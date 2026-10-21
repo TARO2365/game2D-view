@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://nburyahr5agg"
+path="res://.godot/imported/item_gold_ore.png-d2a609a56c8c02f3e735c0e752147a0e.image"
+
+[deps]
+
+source_file="res://assets/production/items/item_gold_ore.png"
+dest_files=["res://.godot/imported/item_gold_ore.png-d2a609a56c8c02f3e735c0e752147a0e.image"]
+
+[params]
+

@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://2knqujemj8ow"
+path="res://.godot/imported/npc_cook_idle.png-fb3698ce6a7bc1a4e8c25feb3eceaeba.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_cook_idle.png"
+dest_files=["res://.godot/imported/npc_cook_idle.png-fb3698ce6a7bc1a4e8c25feb3eceaeba.image"]
+
+[params]
+

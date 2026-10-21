@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://d3jxsmdors8bt"
+path="res://.godot/imported/npc_scientist_climb.png-14a6711fbe8bf2249ecd1d9866fda56a.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_scientist_climb.png"
+dest_files=["res://.godot/imported/npc_scientist_climb.png-14a6711fbe8bf2249ecd1d9866fda56a.image"]
+
+[params]
+

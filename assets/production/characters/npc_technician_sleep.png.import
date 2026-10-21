@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://cmur2bnbmsx5v"
+path="res://.godot/imported/npc_technician_sleep.png-3697a14b41f3414b3ded89fd4bc31fce.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_technician_sleep.png"
+dest_files=["res://.godot/imported/npc_technician_sleep.png-3697a14b41f3414b3ded89fd4bc31fce.image"]
+
+[params]
+

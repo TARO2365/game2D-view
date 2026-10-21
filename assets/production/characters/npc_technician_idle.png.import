@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://b530l6rd5ip18"
+path="res://.godot/imported/npc_technician_idle.png-a4430244aa0c533c2a2cae76de14e207.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_technician_idle.png"
+dest_files=["res://.godot/imported/npc_technician_idle.png-a4430244aa0c533c2a2cae76de14e207.image"]
+
+[params]
+

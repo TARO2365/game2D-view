@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://hsvvu6dwsjek"
+path="res://.godot/imported/building_crate.png-424042e7b055d37a444fd38f023c1789.image"
+
+[deps]
+
+source_file="res://assets/production/buildings/building_crate.png"
+dest_files=["res://.godot/imported/building_crate.png-424042e7b055d37a444fd38f023c1789.image"]
+
+[params]
+
