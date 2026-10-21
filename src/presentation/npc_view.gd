@@ -31,6 +31,8 @@ const WORK_HOLD_SEC := 0.35
 ## Rig work swings per second.
 const WORK_CYCLES_PER_SEC := 1.6
 const IDLE_BLINK_PERIOD := 3.2
+## Rig walk: one 4-key cycle (two steps) per this many tiles.
+const RIG_STRIDE_TILES := 1.2
 ## Idle breathing / weight-shift periods (s) and amplitudes.
 const BREATH_PERIOD := 2.6
 const BREATH_AMOUNT := 0.014
@@ -88,6 +90,9 @@ var _sheets: Dictionary = {}  # anim -> ArtLibrary.npc_anim_sheet() result
 var _bake_vp: SubViewport
 var _bake_tries := 0
 var _baked := false
+var _skel: RigFigure
+## Roles drawn by the skeletal cut-out rig (D-027 pilot: miner only).
+static var rig_roles: Array[StringName] = [&"miner"]
 
 
 func setup(n: Npc, inv: Inventory, reg: TileRegistry, px: int) -> void:
@@ -131,6 +136,16 @@ func _ready() -> void:
 	label.size = Vector2(LABEL_WIDTH_PX, LABEL_FONT_SIZE + 10)
 	label.position = Vector2(-LABEL_WIDTH_PX / 2.0, -BODY_HEIGHT_TILES * tile_px - BAR_GAP_PX - LABEL_FONT_SIZE - 14)
 	add_child(label)
+	if role() in rig_roles:
+		var d := RigDef.for_role(role())
+		if d != null:
+			_skel = RigFigure.new()
+			_skel.name = "Skeleton"
+			_skel.setup(d)
+			add_child(_skel)
+			move_child(_skel, _overlay.get_index())
+			_body.visible = false
+			_sheet_root.visible = false
 	position = target_position()
 	sync(0.0)
 	_bake_rig()
@@ -141,7 +156,7 @@ func _ready() -> void:
 ## polygon as its own draw call, textured rects batch. Skipped headless
 ## (tests), where the vector parts are kept.
 func _bake_rig() -> void:
-	if DisplayServer.get_name() == "headless":
+	if DisplayServer.get_name() == "headless" or _skel != null:
 		return
 	_bake_vp = SubViewport.new()
 	_bake_vp.name = "RigBake"
@@ -202,6 +217,39 @@ func sync(delta: float = 0.0) -> void:
 	var vertical := npc.prev_tile.x == npc.tile.x and npc.prev_tile.y != npc.tile.y
 	_anim = anim_for(npc.state, npc.is_moving(), vertical, carried != null)
 	_carry_color = material_art_color(registry, material) if carried else ProcFigure.NO_CARRY
+	if _skel:
+		_sync_skeleton()
+	else:
+		_sync_look(delta)
+	var bar := roundi(npc.work_progress * 50.0) if (npc.state == &"working" or npc.work_progress > 0.0) else -1
+	if bar != _bar:
+		_bar = bar
+		_overlay.queue_redraw()
+
+
+## Skeletal cut-out rig pilot (D-027 step 3): one smooth rig for every anim.
+func _sync_skeleton() -> void:
+	var k := tile_px / 64.0
+	_skel.scale = Vector2(k * _facing_vis, k)
+	var phase := 0.0
+	match _anim:
+		&"walk", &"carry", &"climb":
+			phase = _walk_dist / (tile_px * RIG_STRIDE_TILES)
+		&"dig", &"build":
+			phase = _work_time / float(RigAnim.LOOP_SEC.get(_anim, 0.8))
+		_:
+			phase = _idle_time / float(RigAnim.LOOP_SEC.get(_anim, 3.0))
+	var blink := fposmod(_idle_time, IDLE_BLINK_PERIOD) > IDLE_BLINK_PERIOD - 0.15
+	_frame = floori(fposmod(phase, 1.0) * 4.0)
+	_skel.apply(_anim, phase, blink, _carry_color)
+
+
+## True when this NPC is drawn by the skeletal rig.
+func uses_skeleton() -> bool:
+	return _skel != null
+
+
+func _sync_look(delta: float) -> void:
 	var info := _sheet_info(_anim)
 	_uses_sheet = info.has("sheet")
 	_body.visible = not _uses_sheet
@@ -210,10 +258,6 @@ func sync(delta: float = 0.0) -> void:
 		_sync_sheet(info, delta)
 	else:
 		_sync_rig()
-	var bar := roundi(npc.work_progress * 50.0) if (npc.state == &"working" or npc.work_progress > 0.0) else -1
-	if bar != _bar:
-		_bar = bar
-		_overlay.queue_redraw()
 
 
 func _sync_sheet(info: Dictionary, delta: float) -> void:

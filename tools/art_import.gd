@@ -103,6 +103,20 @@ func _init() -> void:
 		elif f.begins_with("building_"):
 			var size: Vector2i = BUILDING_SIZES.get(f.get_basename(), Vector2i(64, 64))
 			_import_sprite(path, "buildings/%s.png" % f.get_basename(), size, size, true)
+		elif f.begins_with("rig_") and f.get_basename().ends_with("_parts"):
+			# Character parts sheet (PROMPTS_V2_RIG §1) -> rig atlas + json.
+			var role := f.get_basename().trim_prefix("rig_").trim_suffix("_parts")
+			var sheet := _load(path)
+			_chroma_key(sheet)
+			var res := RigPartsImport.slice(sheet)
+			if res.has("error"):
+				report.append("%s: NOT IMPORTED - %s" % [f, res.error])
+			else:
+				_save(res.image, "rig/rig_%s.png" % role)
+				var jf := FileAccess.open(dst_dir.path_join("rig/rig_%s.json" % role), FileAccess.WRITE)
+				jf.store_string(JSON.stringify(res.json, "\t"))
+				jf.close()
+				report.append("%s -> rig/rig_%s.png + .json" % [f, role])
 		elif f.begins_with("icon_"):
 			_import_sprite(path, "ui/%s.png" % f.get_basename(), Vector2i(64, 64), Vector2i(56, 56), false)
 	_import_npc_sheets(sheets)
