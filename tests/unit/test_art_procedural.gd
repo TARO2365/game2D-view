@@ -84,6 +84,12 @@ func test_anim_for_states() -> void:
 	assert_eq(NpcView.anim_for(&"carrying", true, false, true), &"carry")
 	assert_eq(NpcView.anim_for(&"carrying", false, false, true), &"carry")
 	assert_eq(NpcView.anim_for(&"working", false, false, false), &"dig")
+	# M4a needs.
+	assert_eq(NpcView.anim_for(&"sleeping", false, false, false), &"sleep")
+	assert_eq(NpcView.anim_for(&"sleeping", true, false, false), &"walk", "walking to bed")
+	assert_eq(NpcView.anim_for(&"collapsed", false, false, false), &"sleep", "lies down")
+	assert_eq(NpcView.anim_for(&"eating", false, false, true), &"eat")
+	assert_eq(NpcView.anim_for(&"eating", true, false, true), &"carry", "carrying food to a table")
 
 
 func test_poses_cover_every_frame() -> void:

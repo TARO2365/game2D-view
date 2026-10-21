@@ -23,6 +23,7 @@ const SHEET_CARRY_AT := Vector2(22, -80)
 const NPC_FALLBACK := {
 	&"idle": [&"walk"], &"walk": [], &"carry": [], &"climb": [],
 	&"dig": [], &"build": [], &"sleep": [], &"fall": [],
+	&"eat": [&"idle"],
 }
 ## Animations that, when borrowed from a moving sheet, show one still frame.
 const HOLD_ANIMS: Array[StringName] = [&"idle", &"sleep", &"fall"]

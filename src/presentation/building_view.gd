@@ -149,6 +149,31 @@ static func draw_shape(ci: CanvasItem, key: StringName, rect: Rect2, fill: float
 				ci.draw_rect(Rect2(x, top.end.y, u * 1.5, rect.end.y - top.end.y), a.call(WOOD_DARK))
 			ci.draw_rect(top, a.call(WOOD))
 			ci.draw_rect(top, a.call(OUTLINE), false, maxf(1.0, u * 0.4))
+		&"farm_plot":
+			# Soil bed with a wooden frame and a few sprouts (Asset Agent fallback).
+			var bed := Rect2(rect.position.x, rect.end.y - rect.size.y * 0.45, rect.size.x, rect.size.y * 0.45)
+			ci.draw_rect(bed, a.call(WOOD_DARK))
+			ci.draw_rect(bed.grow(-u * 0.8), a.call(Color(0.33, 0.22, 0.13)))
+			var n := maxi(2, int(rect.size.x / (u * 6.0)))
+			for i in n:
+				var x := rect.position.x + rect.size.x * (i + 0.5) / n
+				var y := bed.position.y + u * 0.5
+				ci.draw_line(Vector2(x, y), Vector2(x, y - u * 3.0), a.call(Color(0.35, 0.7, 0.3)), maxf(1.0, u * 0.6))
+				ci.draw_circle(Vector2(x - u * 0.8, y - u * 2.6), u * 0.9, a.call(Color(0.45, 0.8, 0.35)))
+				ci.draw_circle(Vector2(x + u * 0.8, y - u * 3.2), u * 0.9, a.call(Color(0.45, 0.8, 0.35)))
+			ci.draw_rect(bed, a.call(OUTLINE), false, maxf(1.0, u * 0.4))
+		&"kitchen":
+			# Stove block with burners and a pot (Asset Agent fallback).
+			var body := Rect2(rect.position.x, rect.position.y + rect.size.y * 0.35, rect.size.x, rect.size.y * 0.65)
+			ci.draw_rect(body, a.call(Color(0.55, 0.57, 0.6)))
+			ci.draw_rect(Rect2(body.position.x + u, body.position.y + body.size.y * 0.35, body.size.x - 2.0 * u, body.size.y * 0.5), a.call(Color(0.25, 0.26, 0.28)))
+			for i in 2:
+				var cx := body.position.x + body.size.x * (0.3 + i * 0.4)
+				ci.draw_rect(Rect2(cx - u * 2.0, body.position.y - u * 0.6, u * 4.0, u * 0.6), a.call(Color(0.85, 0.35, 0.15)))
+			var pot := Rect2(body.position.x + body.size.x * 0.18, body.position.y - u * 4.0, body.size.x * 0.25, u * 3.4)
+			ci.draw_rect(pot, a.call(METAL))
+			ci.draw_rect(pot, a.call(OUTLINE), false, maxf(1.0, u * 0.4))
+			ci.draw_rect(body, a.call(OUTLINE), false, maxf(1.0, u * 0.5))
 		_:
 			ci.draw_rect(rect.grow(-2.0), a.call(Color.MAGENTA))
 

@@ -278,7 +278,7 @@ func _sync_sheet(info: Dictionary, delta: float) -> void:
 			&"walk", &"carry", &"climb":
 				# One loop of the sheet per cycle_px of ground: feet stay planted.
 				_frame = floori(_walk_dist / (float(metrics.cycle_px) * k / count)) % count
-			&"idle", &"sleep", &"fall":
+			&"idle", &"sleep", &"fall", &"eat":
 				_frame = idle_frame(_idle_time, count)
 			_:
 				_frame = floori(_work_time * ArtLibrary.ANIM_FPS.get(info.anim, 8.0)) % count
@@ -290,8 +290,8 @@ func _sync_sheet(info: Dictionary, delta: float) -> void:
 	var sx := 1.0
 	var sy := 1.0
 	var skew := 0.0
-	if _anim == &"idle":
-		# Idle: breathing (stretch from the feet up) and a slow weight shift.
+	if _anim == &"idle" or _anim == &"eat":
+		# Idle / eat: breathing (stretch from the feet up) and a slow weight shift.
 		var b := sin(TAU * _idle_time / BREATH_PERIOD)
 		sy = 1.0 + BREATH_AMOUNT * b
 		sx = 1.0 - BREATH_AMOUNT * 0.5 * b
@@ -393,15 +393,27 @@ static func idle_frame(t: float, count: int) -> int:
 
 
 ## Animation for the NPC's visible state (ASSET_SPEC §6 animation list).
+## M4a needs: collapsed and sleeping NPCs lie down (sleep pose), eating NPCs
+## play "eat" (idle body with the hand going to the mouth); moving to food or
+## a bed still walks / climbs.
 static func anim_for(state: StringName, moving: bool, vertical: bool, carrying: bool) -> StringName:
+	if state == &"collapsed":
+		return &"sleep"
 	if state == &"working":
 		return &"dig"
 	if moving and vertical:
 		return &"climb"
-	if carrying:
+	if moving and carrying:
 		return &"carry"
 	if moving:
 		return &"walk"
+	match state:
+		&"sleeping":
+			return &"sleep"
+		&"eating":
+			return &"eat"
+	if carrying:
+		return &"carry"
 	return &"idle"
 
 

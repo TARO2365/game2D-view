@@ -45,6 +45,7 @@ const SPECK_MIN_PX := 12
 const BUILDING_SIZES := {
 	"building_door": Vector2i(64, 192), "building_crate": Vector2i(64, 64),
 	"building_bed": Vector2i(128, 64), "building_table": Vector2i(128, 64),
+	"building_farm_plot": Vector2i(128, 64), "building_kitchen": Vector2i(128, 64),
 }
 const TERRAIN_WORK := 256            # cross-fade resolution
 const TERRAIN_BLEND := 0.16           # overlap (fraction of the work tile) for the wrap seam

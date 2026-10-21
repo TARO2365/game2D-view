@@ -16,6 +16,11 @@ const ANIMS := {
 		&"upper_arm_f": [3.0, -1.0], &"upper_arm_b": [-3.0, 1.0],
 		&"pelvis_y": [0.0, 1.0],
 	},
+	&"eat": {
+		&"upper_arm_f": [40.0, 115.0, 40.0, 20.0], &"forearm_f": [60.0, 100.0, 60.0, 30.0],
+		&"upper_arm_b": [30.0, 32.0, 30.0, 28.0], &"head": [2.0, -4.0, 2.0, 0.0],
+		&"torso": [2.0, 3.0, 2.0, 1.0], &"pelvis_y": [0.0, 0.5, 0.0, 0.0],
+	},
 	&"walk": {
 		&"thigh_f": [24.0, 0.0, -24.0, 0.0], &"thigh_b": [-24.0, 0.0, 24.0, 0.0],
 		&"shin_f": [0.0, -22.0, 0.0, -6.0], &"shin_b": [0.0, -6.0, 0.0, -22.0],
@@ -68,7 +73,7 @@ const ANIMS := {
 
 ## Seconds per loop for time-driven animations; ground-driven ones use the
 ## distance the caller passes.
-const LOOP_SEC := {&"idle": 3.0, &"dig": 0.8, &"build": 0.55, &"sleep": 3.5, &"fall": 0.5}
+const LOOP_SEC := {&"idle": 3.0, &"eat": 1.6, &"dig": 0.8, &"build": 0.55, &"sleep": 3.5, &"fall": 0.5}
 
 
 static func has_anim(anim: StringName) -> bool:

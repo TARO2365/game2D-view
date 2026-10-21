@@ -11,7 +11,7 @@ const P := preload("res://src/presentation/art/art_palette.gd")
 
 const ROLES: Array[StringName] = [&"miner", &"technician", &"scientist", &"cook"]
 ## Procedural animation frame counts (production sheets use their own).
-const FRAMES := {&"idle": 3, &"walk": 4, &"carry": 4, &"climb": 4, &"dig": 4}
+const FRAMES := {&"idle": 3, &"walk": 4, &"carry": 4, &"climb": 4, &"dig": 4, &"eat": 4}
 const ARM_LEN := 24.0
 const LEG_LEN := 29.0
 const HEAD_R := 30.0
@@ -104,6 +104,9 @@ static func pose(anim: StringName, frame: int) -> Dictionary:
 			p[&"arm_f"] = [2.7, 2.9, 3.05, 2.85][f]
 			p[&"arm_b"] = [3.05, 2.85, 2.7, 2.9][f]
 			p[&"bob"] = -2.0 if f % 2 == 1 else 0.0
+		&"eat":
+			p[&"arm_f"] = [0.8, 2.3, 0.8, 0.4][f]
+			p[&"bob"] = 1.0 if f == 1 else 0.0
 		&"dig":
 			p[&"arm_f"] = [3.0, 2.4, 1.5, 0.95][f]
 			p[&"arm_b"] = float(p[&"arm_f"]) - 0.3
