@@ -10,6 +10,7 @@ signal tool_selected(tool: int)
 signal build_menu_requested
 signal priority_selected(priority: int)
 signal rooms_toggled(on: bool)
+signal colony_toggled(on: bool)
 signal zoom_requested(factor: float)
 signal save_requested
 signal menu_requested
@@ -35,6 +36,7 @@ const TOOLS := [
 
 var priority_box: HBoxContainer
 var rooms_button: Button
+var colony_button: Button
 
 var _tool_buttons: Dictionary = {}  # Tool -> Button
 var _priority_buttons: Dictionary = {}  # 1..9 -> Button
@@ -68,6 +70,9 @@ func _ready() -> void:
 	rooms_button = _make(_misc_row, "Rooms", "Show rooms by type (R)", &"rooms")
 	rooms_button.toggle_mode = true
 	rooms_button.toggled.connect(func(on: bool) -> void: rooms_toggled.emit(on))
+	colony_button = _make(_misc_row, "Colony", "Colony overview: needs, food, deaths (C)", &"colony")
+	colony_button.toggle_mode = true
+	colony_button.toggled.connect(func(on: bool) -> void: colony_toggled.emit(on))
 	priority_box = HBoxContainer.new()
 	priority_box.name = "PrioritySelector"
 	_misc_row.add_child(priority_box)
@@ -101,6 +106,10 @@ func set_active_priority(p: int) -> void:
 
 func set_rooms_active(on: bool) -> void:
 	rooms_button.set_pressed_no_signal(on)
+
+
+func set_colony_active(on: bool) -> void:
+	colony_button.set_pressed_no_signal(on)
 
 
 func get_tool_button(t: int) -> Button:

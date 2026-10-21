@@ -5,6 +5,7 @@ extends PanelContainer
 ## GameScreen calls CrateStorage.set_filter / DesignationMap.designate.
 
 signal filter_changed(materials: Array[StringName])
+signal kitchen_target_changed(kg: float)
 signal deconstruct_requested
 signal close_requested
 
@@ -26,18 +27,41 @@ var buildings: Buildings
 var crates: CrateStorage
 var inventory: Inventory
 var tile_registry: TileRegistry
-## Materials offered in the filter: tile defs that drop an item (drop_kg > 0).
+var materials: MaterialDefs
+var farming: Farming
+var kitchens: Kitchens
+## Materials offered in the filter: every MaterialDefs key (soil, ore, food);
+## without MaterialDefs, tile defs that drop an item.
 var filter_materials: Array[StringName] = []
+var farm_box: VBoxContainer
+var farm_label: Label
+var farm_bar: ProgressBar
+var kitchen_box: VBoxContainer
+var kitchen_target: SpinBox
+var kitchen_label: Label
 
 
-func setup(b: Buildings, c: CrateStorage, inv: Inventory, reg: TileRegistry) -> void:
+func setup(b: Buildings, c: CrateStorage, inv: Inventory, reg: TileRegistry, mats: MaterialDefs = null,
+		farms: Farming = null, kits: Kitchens = null) -> void:
 	buildings = b
 	crates = c
 	inventory = inv
 	tile_registry = reg
-	for d in reg.all_defs():
-		if d.drop_kg > 0.0:
-			filter_materials.append(d.key)
+	materials = mats
+	farming = farms
+	kitchens = kits
+	if mats != null:
+		filter_materials = mats.all_keys()
+	else:
+		for d in reg.all_defs():
+			if d.drop_kg > 0.0:
+				filter_materials.append(d.key)
+
+
+func material_name(m: StringName) -> String:
+	if materials != null and materials.has(m):
+		return materials.get_def(m).display_name
+	return BuildMenu.material_name(tile_registry, m)
 
 
 func _ready() -> void:
@@ -77,12 +101,35 @@ func _ready() -> void:
 	filter_box.add_child(grid)
 	for m in filter_materials:
 		var cb := CheckBox.new()
-		cb.text = BuildMenu.material_name(tile_registry, m)
+		cb.text = material_name(m)
 		cb.custom_minimum_size = BUTTON_MIN_SIZE
 		cb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		cb.toggled.connect(func(_on: bool) -> void: filter_changed.emit(checked_materials()))
 		grid.add_child(cb)
 		filter_checks[m] = cb
+	# Farm plot: crop stage + growth.
+	farm_box = VBoxContainer.new()
+	box.add_child(farm_box)
+	farm_label = _label(farm_box)
+	farm_bar = UiStyle.need_bar(Color(0.45, 0.85, 0.4), 14.0)
+	farm_box.add_child(farm_bar)
+	# Kitchen: meal target + stock.
+	kitchen_box = VBoxContainer.new()
+	box.add_child(kitchen_box)
+	var row := HBoxContainer.new()
+	kitchen_box.add_child(row)
+	var tl := _label(row)
+	tl.text = "Keep meals (kg)"
+	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	kitchen_target = SpinBox.new()
+	kitchen_target.min_value = 0.0
+	kitchen_target.max_value = Kitchens.MAX_TARGET_KG
+	kitchen_target.step = 2.0
+	kitchen_target.custom_minimum_size = Vector2(110, 44)
+	kitchen_target.tooltip_text = "Cooks keep this much meal in stock (colony-wide)"
+	kitchen_target.value_changed.connect(func(v: float) -> void: kitchen_target_changed.emit(v))
+	row.add_child(kitchen_target)
+	kitchen_label = _label(kitchen_box)
 	box.add_child(HSeparator.new())
 	deconstruct_button = Button.new()
 	deconstruct_button.text = "Deconstruct"
@@ -139,6 +186,29 @@ func refresh() -> void:
 	else:
 		contents_label.text = ""
 	contents_label.visible = crate
+	var farm := farming != null and farming.is_farm(building_id)
+	farm_box.visible = farm
+	if farm:
+		farm_label.text = "Crop: %s" % farm_stage_name(farming.stage(building_id))
+		farm_bar.value = farming.progress(building_id) * 100.0
+		farm_bar.tooltip_text = "%.0f %% grown" % farm_bar.value
+	var kitchen := kitchens != null and kitchens.is_kitchen(building_id)
+	kitchen_box.visible = kitchen
+	if kitchen:
+		var target := kitchens.target_kg(building_id)
+		if not kitchen_target.get_line_edit().has_focus() and kitchen_target.value != target:
+			kitchen_target.set_value_no_signal(target)
+		var meal := float(inventory.total_kg_by_material().get(Kitchens.RECIPE["output"], 0.0))
+		kitchen_label.text = "Meals in stock: %.0f kg (target %.0f kg)" % [meal, target]
+
+
+static func farm_stage_name(stage: int) -> String:
+	match stage:
+		Farming.Stage.GROWING:
+			return "growing"
+		Farming.Stage.READY:
+			return "ready to harvest"
+	return "empty (waiting for a farmer)"
 
 
 ## "Stored 150 / 2000 kg\n  Dirt 100 kg\n  Rock 50 kg"
@@ -151,7 +221,7 @@ func contents_text() -> String:
 	var keys := per.keys()
 	keys.sort()
 	for m in keys:
-		lines.append("  %s %.0f kg" % [BuildMenu.material_name(tile_registry, m), per[m]])
+		lines.append("  %s %.0f kg" % [material_name(m), per[m]])
 	if per.is_empty():
 		lines.append("  (empty)")
 	return "\n".join(lines)

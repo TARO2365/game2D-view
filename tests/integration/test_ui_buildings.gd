@@ -196,15 +196,18 @@ func test_click_building_shows_crate_panel_and_filter() -> void:
 	assert_true(game.building_inspector.filter_box.visible)
 	assert_string_contains(game.building_inspector.contents_label.text, "0 / 2000 kg")
 	var checks := game.building_inspector.filter_checks
-	assert_eq(checks.size(), 5, "dirt, rock, iron, gold, crystal")
+	assert_eq(checks.keys(), session.materials.all_keys() as Array, "every MaterialDefs key (soil, ore, food)")
+	for f in session.materials.foods():
+		assert_true(checks.has(f), "food %s offered" % f)
 	for m in checks:
 		assert_true((checks[m] as CheckBox).button_pressed, "empty filter = all ticked")
 	(checks[&"rock"] as CheckBox).button_pressed = false
 	var f := session.crates.get_filter(id)
-	assert_eq(f.size(), 4)
+	assert_eq(f.size(), checks.size() - 1)
 	assert_false(f.has(&"rock"))
-	for m in [&"dirt", &"iron_ore", &"gold_ore"]:
-		(checks[m] as CheckBox).button_pressed = false
+	for m in checks:
+		if m != &"crystal" and m != &"rock":
+			(checks[m] as CheckBox).button_pressed = false
 	assert_eq(session.crates.get_filter(id), [&"crystal"] as Array[StringName])
 	(checks[&"crystal"] as CheckBox).button_pressed = false
 	assert_eq(session.crates.get_filter(id), [&"crystal"] as Array[StringName], "cannot untick the last one")
@@ -247,7 +250,7 @@ func test_panels_do_not_overlap_at_1280x720() -> void:
 	assert_false(bm.intersects(bi), "build menu %s vs inspector %s" % [bm, bi])
 	assert_false(game.debug_hud.get_global_rect().intersects(bi), "HUD %s vs inspector %s" % [game.debug_hud.get_global_rect(), bi])
 	assert_lte(bi.end.y, 720.0, "inspector fits on screen")
-	assert_lte(tb.end.x, 1280.0 - 360.0, "toolbar left of the HUD column")
+	assert_lte(tb.end.x, game.alerts_panel.get_global_rect().position.x, "toolbar left of the right column")
 
 
 func test_art_hooks_use_production_files_when_present() -> void:
