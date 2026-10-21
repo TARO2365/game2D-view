@@ -43,6 +43,14 @@ const CLEAR_RADIUS := 4                 # PLACEHOLDER: where stacks cleared off 
 const DROP_BLOCK_MARGIN := 8            # PLACEHOLDER: terrain change this close re-allows a stockpile tile
 const GEO_UNREACHABLE := 1 << 60        # "until terrain changes" (order has no work position)
 const LADDER_REFUND_MATERIAL := &"dirt"  # PLACEHOLDER: ladder material is not tracked per tile
+## M4a food: eating / feeding prefer meal, then ration, then raw mushroom.
+const FOOD_PREFERENCE: Array[StringName] = [&"meal", &"ration", &"mushroom"]
+const FARM_PLANT_TICKS := 40          # PLACEHOLDER
+const FARM_HARVEST_TICKS := 30        # PLACEHOLDER
+const FARM_PRIORITY := 5              # PLACEHOLDER
+const COOK_PRIORITY := 5              # PLACEHOLDER
+const FEED_PRIORITY := 9              # PLACEHOLDER: a collapsed NPC comes first
+const FEED_BELOW_HUNGER := 40.0       # PLACEHOLDER: feed collapsed NPCs hungrier than this
 const ID_CATEGORY := &"job"
 const NO_TILE := Vector2i(-1, -1)
 const KG_EPSILON := 0.001
@@ -81,6 +89,16 @@ var _by_tile: Dictionary = {}        # tile index -> job id (dig / build / decon
 var _by_order: Dictionary = {}       # build order id -> building job id
 var _decon_by_building: Dictionary = {}  # building id -> deconstruct job id
 var _job_tiles: Dictionary = {}      # building deconstruct job id -> [designated tile indices]
+## M4a (optional; attach_m4a): food, farms, kitchens.
+var materials: MaterialDefs = null
+var farming: Farming = null
+var kitchens: Kitchens = null
+var _food_res: Dictionary = {}       # food item id (ground / crate) -> npc id eating it
+var _by_farm: Dictionary = {}        # farm building id -> farm job id
+var _by_kitchen: Dictionary = {}     # kitchen building id -> cook job id
+var _by_patient: Dictionary = {}     # collapsed npc id -> feed job id
+var _food_exists_tick: int = -1      # per-tick memo of food_exists()
+var _food_exists_memo: bool = false
 ## Per-tick memo of [crate id, origin] (see _crate_spots); no crate state is mirrored.
 var _crate_spots_memo: Array = []
 var _crate_spots_tick: int = -1
@@ -149,6 +167,21 @@ func attach_colony(colony: Colony) -> void:
 	_colony_ref = weakref(colony)
 
 
+## M4a wiring (WorldSession calls it once after construction): food
+## definitions, farm plots and kitchens. Without it there are no farm / cook
+## / feed jobs and no food can be found.
+func attach_m4a(material_defs: MaterialDefs, farm: Farming, kitchen: Kitchens) -> void:
+	materials = material_defs
+	farming = farm
+	kitchens = kitchen
+	if farming != null and not farming.farms_changed.is_connected(_on_farms_changed):
+		farming.farms_changed.connect(_on_farms_changed)
+	if kitchens != null and not kitchens.kitchens_changed.is_connected(_on_kitchens_changed):
+		kitchens.kitchens_changed.connect(_on_kitchens_changed)
+	_sync_farm_jobs()
+	_sync_cook_jobs()
+
+
 # --- Contract API -------------------------------------------------------
 
 func update(tick: int) -> void:
@@ -159,6 +192,9 @@ func update(tick: int) -> void:
 	_sweep_unreachable(tick)
 	if SimulationClock.is_cadence_due(SimulationClock.Cadence.NORMAL, tick):
 		_haul_scan(tick)
+		_sync_feed_jobs()
+	if SimulationClock.is_cadence_due(SimulationClock.Cadence.SLOW, tick):
+		_sync_cook_jobs()
 
 
 func job_count() -> int:
@@ -213,6 +249,14 @@ func describe_job(job_id: String) -> String:
 			elif grid.is_ladder(job.tile):
 				what = "ladder"
 			text = "Deconstruct %s (%d, %d)" % [what, job.tile.x, job.tile.y]
+		Job.KIND_FARM:
+			var harvest := farming != null and farming.stage(job.order_id) == Farming.Stage.READY
+			text = "%s farm (%d, %d)" % ["Harvest" if harvest else "Plant", job.tile.x, job.tile.y]
+		Job.KIND_COOK:
+			text = "Cook meal (%d, %d)" % [job.tile.x, job.tile.y]
+		Job.KIND_FEED:
+			var p: Npc = _colony.get_npc(job.order_id) if _colony != null else null
+			text = "Feed %s" % (p.nickname if p != null else job.order_id)
 	if not job.wait_reason.is_empty():
 		text += " - " + job.wait_reason
 	return text
@@ -238,8 +282,8 @@ func check_invariants() -> Array[String]:
 			claimed[iid] = job.id
 		if not job.item_id.is_empty():
 			var it := inventory.get_item(job.item_id)
-			if it == null or not (it.holder == Inventory.Holder.GROUND
-					or (it.holder == Inventory.Holder.CRATE and job.needs_material())):
+			if it == null or not (it.holder == Inventory.Holder.GROUND or (it.holder == Inventory.Holder.CRATE
+					and (job.needs_material() or job.kind == Job.KIND_FEED))):
 				errors.append("%s reserves %s which is not on the ground / in a crate" % [job.id, job.item_id])
 			if _item_res.get(job.item_id, "") != job.id:
 				errors.append("%s item %s missing from reservation table" % [job.id, job.item_id])
@@ -278,6 +322,18 @@ func check_invariants() -> Array[String]:
 						errors.append("%s missing from building index" % job.id)
 				if _by_tile.get(_idx(job.tile), "") != job.id:
 					errors.append("%s missing from tile index" % job.id)
+			Job.KIND_FARM:
+				if farming == null or not farming.is_farm(job.order_id) \
+						or _by_farm.get(job.order_id, "") != job.id:
+					errors.append("%s: farm %s missing or not indexed" % [job.id, job.order_id])
+			Job.KIND_COOK:
+				if kitchens == null or not kitchens.is_kitchen(job.order_id) \
+						or _by_kitchen.get(job.order_id, "") != job.id:
+					errors.append("%s: kitchen %s missing or not indexed" % [job.id, job.order_id])
+			Job.KIND_FEED:
+				var patient: Npc = colony.get_npc(job.order_id) if colony != null else null
+				if patient == null or _by_patient.get(job.order_id, "") != job.id:
+					errors.append("%s: patient %s missing or not indexed" % [job.id, job.order_id])
 			_:
 				if designations.get_kind(job.tile) != job.order_kind:
 					errors.append("%s has no matching order at %s" % [job.id, job.tile])
@@ -294,6 +350,7 @@ func check_invariants() -> Array[String]:
 			errors.append("stale reservation of %s by %s" % [iid, _item_res[iid]])
 	if colony != null:
 		var per_job := {}
+		var beds_seen := {}
 		for npc in colony.all_npcs():
 			if not npc.job_id.is_empty():
 				per_job[npc.job_id] = int(per_job.get(npc.job_id, 0)) + 1
@@ -305,11 +362,38 @@ func check_invariants() -> Array[String]:
 			var c := inventory.carried_by(npc.id)
 			if c != null:
 				var j2: Job = _jobs.get(npc.job_id)
-				if j2 == null or j2.carried_id != c.id:
-					errors.append("%s carries %s outside its job" % [npc.id, c.id])
+				var eating := npc._activity == &"eat" and npc._food_item == c.id
+				if (j2 == null or j2.carried_id != c.id) and not eating:
+					errors.append("%s carries %s outside its job / meal" % [npc.id, c.id])
+				if eating and not npc.job_id.is_empty():
+					errors.append("%s eats while holding job %s" % [npc.id, npc.job_id])
+			if npc.condition == Npc.CONDITION_DEAD and (c != null or not npc.job_id.is_empty()
+					or not npc._food_item.is_empty() or not npc.bed_id.is_empty()):
+				errors.append("dead %s still holds something" % npc.id)
+			if not npc._food_item.is_empty():
+				var f := inventory.get_item(npc._food_item)
+				if f == null:
+					errors.append("%s meal item %s is gone" % [npc.id, npc._food_item])
+				elif f.holder != Inventory.Holder.NPC and _food_res.get(f.id, "") != npc.id:
+					errors.append("%s meal item %s not reserved for it" % [npc.id, f.id])
+			if not npc.bed_id.is_empty():
+				if beds_seen.has(npc.bed_id):
+					errors.append("bed %s owned by %s and %s" % [npc.bed_id, beds_seen[npc.bed_id], npc.id])
+				beds_seen[npc.bed_id] = npc.id
+				if buildings != null and buildings.get_building(npc.bed_id).get("key", &"") != &"bed":
+					errors.append("%s owns %s which is not a bed" % [npc.id, npc.bed_id])
 		for jid: String in per_job:
 			if per_job[jid] > 1:
 				errors.append("job %s has %d workers" % [jid, per_job[jid]])
+	for iid: String in _food_res:
+		var eater: Npc = colony.get_npc(_food_res[iid]) if colony != null else null
+		var f2 := inventory.get_item(iid)
+		if eater == null or eater._food_item != iid:
+			errors.append("stale food reservation %s by %s" % [iid, _food_res[iid]])
+		if f2 == null or not (f2.holder == Inventory.Holder.GROUND or f2.holder == Inventory.Holder.CRATE):
+			errors.append("reserved food %s is not on the ground / in a crate" % iid)
+		if _item_res.has(iid) or claimed.has(iid):
+			errors.append("food %s reserved by an NPC and a job" % iid)
 	var snap := stockpiles.to_snapshot()
 	for b: Dictionary in snap["bookings"]:
 		var hj: Job = _jobs.get(b["job_id"])
@@ -405,10 +489,14 @@ func drive(npc: Npc, tick: int) -> Dictionary:
 	match job.kind:
 		Job.KIND_DIG:
 			return _drive_dig(job, npc)
-		Job.KIND_BUILD, Job.KIND_BUILDING:
+		Job.KIND_BUILD, Job.KIND_BUILDING, Job.KIND_COOK:
 			return _drive_build(job, npc)
 		Job.KIND_DECONSTRUCT:
 			return _drive_deconstruct(job, npc)
+		Job.KIND_FARM:
+			return _drive_farm(job, npc)
+		Job.KIND_FEED:
+			return _drive_feed(job, npc)
 		Job.KIND_HAUL:
 			return _drive_haul(job, npc)
 	return {"action": ACTION_NONE}
@@ -438,9 +526,9 @@ func needs_new_route(npc: Npc) -> bool:
 				if c != null and not crates.accepts(bc, c.material):
 					return true  # filter changed: stop and re-book
 			return _haul_target(job) == NO_TILE
-		Job.KIND_DIG, Job.KIND_DECONSTRUCT:
+		Job.KIND_DIG, Job.KIND_DECONSTRUCT, Job.KIND_FARM:
 			return not _work_goals(job).has(dest)
-		Job.KIND_BUILD, Job.KIND_BUILDING:
+		Job.KIND_BUILD, Job.KIND_BUILDING, Job.KIND_COOK, Job.KIND_FEED:
 			if job.phase == Job.PHASE_DELIVER or job.phase == Job.PHASE_WORK:
 				return not _work_goals(job).has(dest)
 	return false
@@ -463,7 +551,7 @@ func report_unreachable(npc: Npc, tick: int) -> void:
 					npc._blocked_drops[_idx(bt)] = true
 			_unassign(job)  # deletes the haul job, drops what it carried here
 			_set_item_unreachable(iid, tick)
-		Job.KIND_BUILD, Job.KIND_BUILDING:
+		Job.KIND_BUILD, Job.KIND_BUILDING, Job.KIND_COOK, Job.KIND_FEED:
 			if job.phase == Job.PHASE_FETCH and not job.item_id.is_empty():
 				# The material is out of reach, not the site: try another stack.
 				_set_item_unreachable(job.item_id, tick)
@@ -543,6 +631,10 @@ func load_snapshot(s: Dictionary) -> int:
 	_by_order.clear()
 	_decon_by_building.clear()
 	_job_tiles.clear()
+	_by_farm.clear()
+	_by_kitchen.clear()
+	_by_patient.clear()
+	_food_res.clear()
 	_item_res.clear()
 	_site_kg.clear()
 	_open_chunks.clear()
@@ -607,6 +699,9 @@ func load_snapshot(s: Dictionary) -> int:
 	_reconcile_pending = true
 	if _colony != null:
 		revalidate()
+	_sync_farm_jobs()
+	_sync_cook_jobs()
+	_sync_feed_jobs()
 	_queue_all_loose()
 	jobs_changed.emit()
 	return dropped
@@ -661,10 +756,28 @@ func revalidate() -> void:
 			var j: Job = _jobs.get(npc.job_id)
 			if j == null or j.worker_id != npc.id:
 				colony._on_job_released(npc)
+		# Meals (M4a): a reserved stack must still be free on the ground / in
+		# a crate; a carried one must be in the NPC's hands.
+		if not npc._food_item.is_empty():
+			var f := inventory.get_item(npc._food_item)
+			var ok := f != null and npc._activity == &"eat" and npc.job_id.is_empty()
+			if ok and f.holder == Inventory.Holder.NPC:
+				ok = f.holder_id == npc.id
+			elif ok:
+				ok = (f.holder == Inventory.Holder.GROUND or f.holder == Inventory.Holder.CRATE) \
+						and not _item_res.has(f.id) and _food_res.get(f.id, npc.id) == npc.id
+				if ok:
+					_food_res[f.id] = npc.id
+			if not ok:
+				npc._food_item = ""
+				if npc._activity == &"eat":
+					npc._activity = &""
+					npc._phase = &""
 		var c := inventory.carried_by(npc.id)
 		if c != null:
 			var j2: Job = _jobs.get(npc.job_id)
-			if j2 == null or j2.carried_id != c.id:
+			var eating := npc._activity == &"eat" and npc._food_item == c.id
+			if (j2 == null or j2.carried_id != c.id) and not eating:
 				_put_down(npc.id, npc.tile)
 	for it in inventory.all_items():
 		if it.holder == Inventory.Holder.NPC and colony.get_npc(it.holder_id) == null:
@@ -828,6 +941,8 @@ func _drive_build(job: Job, npc: Npc) -> Dictionary:
 ## stack up. Returns the carried item id, or "".
 func _take_off_site(stacks: Array[ItemStack], npc: Npc) -> String:
 	for it in stacks:
+		if _food_res.has(it.id):
+			continue  # an NPC is walking to it to eat it
 		var owner_id: String = _item_res.get(it.id, "")
 		if not owner_id.is_empty():
 			var oj: Job = _jobs.get(owner_id)
@@ -976,6 +1091,9 @@ func _complete_dig(job: Job) -> void:
 func _complete_build(job: Job) -> void:
 	if job.kind == Job.KIND_BUILDING:
 		_complete_building(job)
+		return
+	if job.kind == Job.KIND_COOK:
+		_complete_cook(job)
 		return
 	var wall := job.order_kind == DesignationMap.Kind.BUILD_WALL
 	var ok := grid.can_place_structure(job.tile, WorldGrid.Structure.LADDER)
@@ -1146,9 +1264,22 @@ func _first_goals(job: Job, npc: Npc) -> Dictionary:
 	var goals: Array[Vector2i] = []
 	var item_id := ""
 	match job.kind:
-		Job.KIND_DIG, Job.KIND_DECONSTRUCT:
+		Job.KIND_DIG, Job.KIND_DECONSTRUCT, Job.KIND_FARM:
 			goals = _work_goals(job)
-		Job.KIND_BUILD, Job.KIND_BUILDING:
+		Job.KIND_FEED:
+			var work := _work_goals(job)
+			if work.is_empty():
+				return {"reason": REASON_UNREACHABLE}
+			if npc._region_valid and not _any_in_region(work, npc):
+				return {"reason": "patient out of reach"}
+			item_id = _find_food(npc)
+			if item_id.is_empty():
+				return {"reason": REASON_NO_MATERIAL}
+			goals = _reach_positions(_item_pos(inventory.get_item(item_id)), -1)
+			if goals.is_empty():
+				_set_item_unreachable(item_id, _tick)
+				return {"reason": "food unreachable"}
+		Job.KIND_BUILD, Job.KIND_BUILDING, Job.KIND_COOK:
 			var work := _work_goals(job)
 			if work.is_empty():
 				return {"reason": REASON_UNREACHABLE}
@@ -1197,9 +1328,9 @@ func _assign(job: Job, npc: Npc, item_id: String) -> void:
 	npc.job_id = job.id
 	job.wait_reason = ""
 	match job.kind:
-		Job.KIND_DIG, Job.KIND_DECONSTRUCT:
+		Job.KIND_DIG, Job.KIND_DECONSTRUCT, Job.KIND_FARM:
 			job.phase = Job.PHASE_WORK
-		Job.KIND_BUILD, Job.KIND_BUILDING:
+		Job.KIND_BUILD, Job.KIND_BUILDING, Job.KIND_COOK, Job.KIND_FEED:
 			if not item_id.is_empty():
 				_reserve(item_id, job)
 				job.phase = Job.PHASE_FETCH
@@ -1228,7 +1359,26 @@ func _give_up(job: Job, reason: String) -> void:
 ## held by a haul job nobody works on yet may be taken over. A confined NPC
 ## only considers items inside its reach.
 func _find_material(job: Job, npc: Npc, in_region: bool = true) -> String:
-	var mats: Array = _recipe(job).get("materials", [])
+	if job.kind == Job.KIND_FEED:
+		return _find_food(npc, in_region)
+	return _find_item(_recipe(job).get("materials", []), npc, in_region)
+
+
+## Best food for npc: meal, then ration, then raw mushroom (FOOD_PREFERENCE),
+## each the nearest unreserved stack on the ground or in a crate.
+func _find_food(npc: Npc, in_region: bool = true) -> String:
+	for m: StringName in FOOD_PREFERENCE:
+		var iid := _find_item([m], npc, in_region)
+		if not iid.is_empty():
+			return iid
+	return ""
+
+
+## Nearest unreserved item of one of `mats` (Manhattan from the NPC) on the
+## ground or in a crate. Ground stacks held by a haul job nobody works on
+## yet may be taken over; food reserved by an eating NPC never is. A confined
+## NPC only considers items inside its reach (unless in_region is false).
+func _find_item(mats: Array, npc: Npc, in_region: bool = true) -> String:
 	var near := npc.tile
 	var best := ""
 	var best_d := 0
@@ -1241,7 +1391,7 @@ func _find_material(job: Job, npc: Npc, in_region: bool = true) -> String:
 		if in_region and npc._region_valid and not npc._region_reach.has(_idx(ct)):
 			continue
 		for it in inventory.crate_items(e[0]):
-			if not (it.material in mats) or _item_res.has(it.id) \
+			if not (it.material in mats) or _item_res.has(it.id) or _food_res.has(it.id) \
 					or int(_item_unreachable.get(it.id, -1)) > _tick:
 				continue
 			best = it.id
@@ -1274,7 +1424,7 @@ func _find_material(job: Job, npc: Npc, in_region: bool = true) -> String:
 					var d := absi(it.tile.x - near.x) + absi(it.tile.y - near.y)
 					if not best.is_empty() and d >= best_d:
 						continue
-					if int(_item_unreachable.get(iid, -1)) > _tick:
+					if int(_item_unreachable.get(iid, -1)) > _tick or _food_res.has(iid):
 						continue
 					if in_region and npc._region_valid and not npc._region_reach.has(_idx(it.tile)):
 						continue
@@ -1342,6 +1492,10 @@ func _recipe(job: Job) -> Dictionary:
 		var mats: Array[StringName] = []
 		mats.assign(d.materials)
 		return {"materials": mats, "kg": d.kg, "work_ticks": d.work_ticks}
+	if job.kind == Job.KIND_COOK:
+		var cm: Array[StringName] = [Kitchens.RECIPE["input"]]
+		return {"materials": cm, "kg": float(Kitchens.RECIPE["input_kg"]),
+				"work_ticks": int(Kitchens.RECIPE["work_ticks"])}
 	return ConstructionDefs.recipe(job.order_kind)
 
 
@@ -1349,6 +1503,9 @@ func _recipe(job: Job) -> Dictionary:
 func _job_rect(job: Job) -> Rect2i:
 	if buildings == null:
 		return Rect2i()
+	if job.kind == Job.KIND_FARM or job.kind == Job.KIND_COOK:
+		var fb := buildings.get_building(job.order_id)
+		return buildings.footprint(fb["key"], fb["origin"]) if not fb.is_empty() else Rect2i()
 	if job.kind == Job.KIND_BUILDING:
 		return buildings.footprint(job.building_key, job.tile)
 	if job.kind == Job.KIND_DECONSTRUCT and not job.order_id.is_empty():
@@ -1832,7 +1989,7 @@ func _delete_job(job: Job) -> void:
 	if not _jobs.has(job.id):
 		return
 	_jobs.erase(job.id)
-	if job.kind != Job.KIND_HAUL and job.kind != Job.KIND_BUILDING and grid.in_bounds(job.tile) \
+	if job.order_kind != DesignationMap.Kind.NONE and grid.in_bounds(job.tile) \
 			and _by_tile.get(_idx(job.tile), "") == job.id:
 		_by_tile.erase(_idx(job.tile))
 		_count_wall(job, -1)
@@ -1844,6 +2001,9 @@ func _delete_job(job: Job) -> void:
 		_by_order.erase(job.order_id)
 	if job.kind == Job.KIND_DECONSTRUCT and _decon_by_building.get(job.order_id, "") == job.id:
 		_decon_by_building.erase(job.order_id)
+	for index: Dictionary in [_by_farm, _by_kitchen, _by_patient]:
+		if index.get(job.order_id, "") == job.id:
+			index.erase(job.order_id)
 	_release_item(job)
 	_release_storage(job)
 	_site_kg.erase(job.id)
@@ -1877,6 +2037,22 @@ func _restore_job(job: Job, carried_claims: Dictionary) -> bool:
 				return false
 			job.order_kind = DesignationMap.Kind.DECONSTRUCT
 			job.priority = designations.get_priority(job.tile)
+		Job.KIND_FARM:
+			if farming == null or not farming.is_farm(job.order_id) or _by_farm.has(job.order_id) \
+					or farming.stage(job.order_id) == Farming.Stage.GROWING:
+				return false
+			job.order_kind = DesignationMap.Kind.NONE
+		Job.KIND_COOK:
+			if kitchens == null or not kitchens.is_kitchen(job.order_id) or _by_kitchen.has(job.order_id):
+				return false
+			job.order_kind = DesignationMap.Kind.NONE
+		Job.KIND_FEED:
+			var patient: Npc = _colony.get_npc(job.order_id) if _colony != null else null
+			if patient == null or patient.condition != Npc.CONDITION_COLLAPSED \
+					or _by_patient.has(job.order_id):
+				return false
+			job.order_kind = DesignationMap.Kind.NONE
+			job.tile = patient.tile
 		_:
 			var want := designations.get_kind(job.tile)
 			var kind_ok := (job.kind == Job.KIND_DIG and job.order_kind == DesignationMap.Kind.DIG) \
@@ -1888,7 +2064,7 @@ func _restore_job(job: Job, carried_claims: Dictionary) -> bool:
 	if not job.item_id.is_empty():
 		var it := inventory.get_item(job.item_id)
 		var holder_ok := it != null and (it.holder == Inventory.Holder.GROUND
-				or (it.holder == Inventory.Holder.CRATE and job.needs_material()))
+				or (it.holder == Inventory.Holder.CRATE and (job.needs_material() or job.kind == Job.KIND_FEED)))
 		if not holder_ok or _item_res.has(job.item_id):
 			job.item_id = ""
 	if not job.carried_id.is_empty():
@@ -1902,9 +2078,9 @@ func _restore_job(job: Job, carried_claims: Dictionary) -> bool:
 		job.phase = Job.PHASE_OPEN
 	else:
 		match job.kind:
-			Job.KIND_DIG, Job.KIND_DECONSTRUCT:
+			Job.KIND_DIG, Job.KIND_DECONSTRUCT, Job.KIND_FARM:
 				job.phase = Job.PHASE_WORK
-			Job.KIND_BUILD, Job.KIND_BUILDING:
+			Job.KIND_BUILD, Job.KIND_BUILDING, Job.KIND_COOK, Job.KIND_FEED:
 				if not job.carried_id.is_empty():
 					# A stack cleared off a wall site is never delivered to it.
 					job.phase = Job.PHASE_CLEAR if job.phase == Job.PHASE_CLEAR else Job.PHASE_DELIVER
@@ -1922,6 +2098,12 @@ func _restore_job(job: Job, carried_claims: Dictionary) -> bool:
 			pass
 		Job.KIND_BUILDING:
 			_by_order[job.order_id] = job.id
+		Job.KIND_FARM:
+			_by_farm[job.order_id] = job.id
+		Job.KIND_COOK:
+			_by_kitchen[job.order_id] = job.id
+		Job.KIND_FEED:
+			_by_patient[job.order_id] = job.id
 		_:
 			_by_tile[_idx(job.tile)] = job.id
 			_count_wall(job, 1)
@@ -2117,7 +2299,7 @@ func _haul_scan(tick: int) -> void:
 		n += 1
 		var it := inventory.get_item(iid)
 		if it == null or it.holder != Inventory.Holder.GROUND or stockpiles.is_stored(it) \
-				or _item_res.has(iid):
+				or _item_res.has(iid) or _food_res.has(iid):
 			continue
 		if int(_item_unreachable.get(iid, -1)) > tick:
 			_haul_retry[iid] = true
@@ -2171,7 +2353,7 @@ func _add_haul_job(job: Job, iid: String) -> void:
 
 
 func _queue_item(iid: String) -> void:
-	if iid.is_empty() or _queued.has(iid) or _item_res.has(iid):
+	if iid.is_empty() or _queued.has(iid) or _item_res.has(iid) or _food_res.has(iid):
 		return
 	var it := inventory.get_item(iid)
 	if it == null or it.holder != Inventory.Holder.GROUND or stockpiles.is_stored(it):
@@ -2344,6 +2526,10 @@ func _work_goals(job: Job) -> Array[Vector2i]:
 
 func _compute_work_goals(job: Job) -> Array[Vector2i]:
 	match job.kind:
+		Job.KIND_FARM, Job.KIND_COOK:
+			return _reach_rect(_job_rect(job), false)
+		Job.KIND_FEED:
+			return _reach_positions(job.tile, -1)  # next to the collapsed NPC's feet
 		Job.KIND_BUILDING:
 			var d := buildings.def(job.building_key) if buildings != null else null
 			return _reach_rect(_job_rect(job), d != null and d.is_door)
@@ -2443,3 +2629,384 @@ func _tile_of(idx: int) -> Vector2i:
 ## gravity), so nothing is left floating on a ladder mid-shaft (QA-9).
 func _put_down(npc_id: String, tile: Vector2i) -> CommandResult:
 	return inventory.drop(npc_id, _landing(tile))
+
+
+# --- M4a: food for eating NPCs (Colony activities) -------------------------
+
+func nutrition(material: StringName) -> float:
+	return materials.nutrition_per_kg(material) if materials != null else 0.0
+
+
+## Reserves the best food stack for npc to eat (meal > ration > mushroom,
+## nearest first; ground or crate) unless it already has one. Returns the
+## item id or "" (npc._food_item is set). An unstarted haul job gives the
+## stack up.
+func reserve_food(npc: Npc) -> String:
+	if not npc._food_item.is_empty():
+		var cur := inventory.get_item(npc._food_item)
+		if cur != null and (_food_res.get(cur.id, "") == npc.id
+				or (cur.holder == Inventory.Holder.NPC and cur.holder_id == npc.id)):
+			return cur.id
+		npc._food_item = ""
+	if materials == null:
+		return ""
+	var iid := _find_food(npc)
+	if iid.is_empty():
+		return ""
+	var owner_id: String = _item_res.get(iid, "")
+	if not owner_id.is_empty():
+		var oj: Job = _jobs.get(owner_id)
+		if oj != null:
+			_delete_job(oj)  # unstarted haul job (_find_item only offers those)
+		_item_res.erase(iid)
+	_food_res[iid] = npc.id
+	npc._food_item = iid
+	return iid
+
+
+## Work positions to pick up npc's reserved food ([] if none / unreachable).
+func food_goals(npc: Npc) -> Array[Vector2i]:
+	var it := inventory.get_item(npc._food_item)
+	if it == null or it.holder == Inventory.Holder.NPC:
+		return [] as Array[Vector2i]
+	return _reach_positions(_item_pos(it), -1)
+
+
+## The food stack is out of reach: release it and skip it for a while.
+func food_unreachable(npc: Npc) -> void:
+	_set_item_unreachable(npc._food_item, _tick)
+	release_food(npc)
+
+
+## Picks up enough of the reserved food to fill npc's hunger (split ok).
+## True if npc now carries its meal.
+func take_food(npc: Npc) -> bool:
+	var it := inventory.get_item(npc._food_item)
+	if it == null or _food_res.get(it.id, "") != npc.id:
+		release_food(npc)
+		return false
+	var per_kg := maxf(nutrition(it.material), 0.001)
+	var want := clampf((100.0 - npc.hunger) / per_kg, 0.05, Inventory.CARRY_CAPACITY_KG)
+	var r: CommandResult
+	if it.holder == Inventory.Holder.CRATE:
+		r = inventory.take_from_crate(it.id, npc.id, want)
+	else:
+		r = inventory.pick_up(it.id, npc.id, want)
+	_food_res.erase(it.id)
+	if not r.ok:
+		npc._food_item = ""
+		_queue_item(it.id)
+		return false
+	npc._food_item = r.data["item_id"]
+	if r.data.get("split", false):
+		_queue_item(it.id)  # the rest is loose again
+	return true
+
+
+## Eats the carried meal: consumed through Inventory (ledger), hunger raised
+## by kg × nutrition × factor (table bonus). Returns the hunger gained.
+func eat(npc: Npc, factor: float = 1.0) -> float:
+	var it := inventory.carried_by(npc.id)
+	if it == null or it.id != npc._food_item:
+		npc._food_item = ""
+		return 0.0
+	var gain := it.kg * nutrition(it.material) * factor
+	var r := inventory.consume_item(it.id, it.kg)
+	npc._food_item = ""
+	if not r.ok:
+		return 0.0
+	npc.hunger = minf(100.0, npc.hunger + gain)
+	return gain
+
+
+## Drops a carried meal where the NPC stands / releases a reserved one.
+func release_food(npc: Npc) -> void:
+	var iid := npc._food_item
+	npc._food_item = ""
+	if iid.is_empty():
+		return
+	var it := inventory.get_item(iid)
+	if _food_res.get(iid, "") == npc.id:
+		_food_res.erase(iid)
+	if it != null and it.holder == Inventory.Holder.NPC and it.holder_id == npc.id:
+		_put_down(npc.id, npc.tile)
+	_queue_item(iid)
+
+
+## Any unreserved food stack exists (stops at the first one; memoised for
+## the current tick, then discarded).
+func food_exists() -> bool:
+	if materials == null:
+		return false
+	if _food_exists_tick == _tick:
+		return _food_exists_memo
+	_food_exists_tick = _tick
+	_food_exists_memo = _scan_food_exists()
+	return _food_exists_memo
+
+
+func _scan_food_exists() -> bool:
+	for m: StringName in FOOD_PREFERENCE:
+		for iid: String in _ground:
+			var it := inventory.get_item(iid)
+			if it != null and it.material == m and not _food_res.has(iid):
+				var owner_id: String = _item_res.get(iid, "")
+				var oj: Job = _jobs.get(owner_id) if not owner_id.is_empty() else null
+				if oj == null or (oj.kind == Job.KIND_HAUL and oj.worker_id.is_empty()):
+					return true
+		for e: Array in _crate_spots():
+			for it in inventory.crate_items(e[0]):
+				if it.material == m and not _food_res.has(it.id) and not _item_res.has(it.id):
+					return true
+	return false
+
+
+## Total kg of every food material that exists (alerts / tests).
+func food_kg_total() -> float:
+	var total := 0.0
+	if materials == null:
+		return total
+	var t := inventory.total_kg_by_material()
+	for m in materials.foods():
+		total += float(t.get(m, 0.0))
+	return total
+
+
+## Collapsed (or dead) NPC: drop its meal; the job is released by Colony.
+func on_npc_down(npc: Npc) -> void:
+	release_food(npc)
+
+
+## Feed jobs follow collapsed / recovered / dead NPCs right away.
+func sync_feed_jobs() -> void:
+	_sync_feed_jobs()
+
+
+## Work positions around a building's footprint ([] if it is gone).
+func building_goals(building_id: String) -> Array[Vector2i]:
+	if buildings == null:
+		return [] as Array[Vector2i]
+	var b := buildings.get_building(building_id)
+	if b.is_empty():
+		return [] as Array[Vector2i]
+	return _reach_rect(buildings.footprint(b["key"], b["origin"]), false)
+
+
+# --- M4a: farm, cook and feed jobs ----------------------------------------
+
+func _on_farms_changed(_building_id: String) -> void:
+	if _sync_farm_jobs():
+		jobs_changed.emit()
+
+
+func _on_kitchens_changed(_building_id: String) -> void:
+	if _sync_cook_jobs():
+		jobs_changed.emit()
+
+
+func _new_job(kind: StringName, order_id: String, tile: Vector2i, priority: int) -> Job:
+	var job := Job.new()
+	job.id = ids.allocate(ID_CATEGORY)
+	job.kind = kind
+	job.order_kind = DesignationMap.Kind.NONE
+	job.order_id = order_id
+	job.tile = tile
+	job.priority = priority
+	_jobs[job.id] = job
+	_refresh_open(job)
+	return job
+
+
+## One farm job per farm plot that is EMPTY (plant) or READY (harvest).
+func _sync_farm_jobs() -> bool:
+	if farming == null or buildings == null:
+		return false
+	var changed := false
+	var live := {}
+	for fid in farming.farm_ids():
+		var st := farming.stage(fid)
+		if st != Farming.Stage.EMPTY and st != Farming.Stage.READY:
+			continue
+		live[fid] = true
+		if not _by_farm.has(fid):
+			var b := buildings.get_building(fid)
+			if b.is_empty():
+				continue
+			_by_farm[fid] = _new_job(Job.KIND_FARM, fid, b["origin"], FARM_PRIORITY).id
+			changed = true
+	for fid: String in _by_farm.keys():
+		if live.has(fid):
+			continue
+		var job: Job = _jobs.get(_by_farm[fid])
+		if job == null:
+			_by_farm.erase(fid)
+		elif not job.is_done():
+			_cancel(job)
+			changed = true
+	return changed
+
+
+## Cook jobs while the colony's meal stock (+ meals already being cooked)
+## is below a kitchen's target; one job per kitchen.
+func _sync_cook_jobs() -> bool:
+	if kitchens == null or buildings == null:
+		return false
+	var changed := false
+	for kid: String in _by_kitchen.keys():
+		var job: Job = _jobs.get(_by_kitchen[kid])
+		if job == null:
+			_by_kitchen.erase(kid)
+		elif not kitchens.is_kitchen(kid) and not job.is_done():
+			_cancel(job)
+			changed = true
+	var ids_k := kitchens.kitchen_ids()
+	if ids_k.is_empty():
+		return changed
+	var meal_kg := float(inventory.total_kg_by_material().get(Kitchens.RECIPE["output"], 0.0))
+	meal_kg += _by_kitchen.size() * float(Kitchens.RECIPE["output_kg"])
+	for kid in ids_k:
+		if _by_kitchen.has(kid) or not kitchens.needs_cooking(meal_kg, kid):
+			continue
+		var b := buildings.get_building(kid)
+		if b.is_empty():
+			continue
+		_by_kitchen[kid] = _new_job(Job.KIND_COOK, kid, b["origin"], COOK_PRIORITY).id
+		meal_kg += float(Kitchens.RECIPE["output_kg"])
+		changed = true
+	return changed
+
+
+## A feed job for every collapsed NPC that is hungry; removed when it no
+## longer applies (recovered, fed, dead) unless the food is on its way.
+func _sync_feed_jobs() -> void:
+	var colony := _colony
+	if colony == null or materials == null:
+		return
+	for npc in colony.all_npcs():
+		if npc.condition == Npc.CONDITION_COLLAPSED and npc.hunger < FEED_BELOW_HUNGER \
+				and not _by_patient.has(npc.id):
+			_by_patient[npc.id] = _new_job(Job.KIND_FEED, npc.id, npc.tile, FEED_PRIORITY).id
+	for pid: String in _by_patient.keys():
+		var job: Job = _jobs.get(_by_patient[pid])
+		if job == null:
+			_by_patient.erase(pid)
+			continue
+		var p := colony.get_npc(pid)
+		if (p == null or p.condition != Npc.CONDITION_COLLAPSED or p.hunger >= FEED_BELOW_HUNGER) \
+				and not job.is_done():
+			_cancel(job)
+
+
+func _drive_farm(job: Job, npc: Npc) -> Dictionary:
+	if farming == null or not farming.is_farm(job.order_id):
+		_cancel(job)
+		return {"action": ACTION_NONE}
+	var st := farming.stage(job.order_id)
+	if st == Farming.Stage.GROWING:
+		_remove_finished(job)
+		return {"action": ACTION_NONE}
+	var goals := _work_goals(job)
+	if goals.is_empty():
+		_give_up(job, REASON_UNREACHABLE)
+		return {"action": ACTION_NONE}
+	if not goals.has(npc.tile):
+		return {"action": ACTION_GOTO, "goals": goals}
+	job.phase = Job.PHASE_WORK
+	job.work_ticks += 1
+	var total := FARM_HARVEST_TICKS if st == Farming.Stage.READY else FARM_PLANT_TICKS
+	npc.work_progress = minf(1.0, float(job.work_ticks) / total)
+	if job.work_ticks < total:
+		return {"action": ACTION_WORK}
+	job.phase = Job.PHASE_DONE  # our farms_changed handler ignores it now
+	if st == Farming.Stage.READY:
+		farming.harvest(job.order_id, _landing(job.tile))
+	else:
+		farming.plant(job.order_id)
+	_remove_finished(job)
+	_sync_farm_jobs()  # harvested -> EMPTY again: a new planting job
+	return {"action": ACTION_NONE}
+
+
+## Kitchens.cook consumes the recipe input from SITE(job) and spawns the
+## output; anything left on the site goes back to the ground.
+func _complete_cook(job: Job) -> void:
+	if kitchens == null or not kitchens.is_kitchen(job.order_id):
+		_cancel(job)
+		return
+	job.phase = Job.PHASE_DONE
+	var r := kitchens.cook(job.order_id, job.id, _landing(job.tile))
+	if inventory.site_kg(job.id) > 0.0:
+		inventory.return_site_to_ground(job.id, _landing(job.tile))
+	_site_kg.erase(job.id)
+	_remove_finished(job)
+	if r.ok:
+		_sync_cook_jobs()
+
+
+## Feed: fetch food for the patient's hunger, carry it to the collapsed NPC,
+## feed it (consumed through Inventory, patient hunger raised).
+func _drive_feed(job: Job, npc: Npc) -> Dictionary:
+	var colony := _colony
+	var patient: Npc = colony.get_npc(job.order_id) if colony != null else null
+	if patient == null or patient.condition != Npc.CONDITION_COLLAPSED:
+		_cancel(job)
+		return {"action": ACTION_NONE}
+	job.tile = patient.tile
+	for _step in 3:
+		match job.phase:
+			Job.PHASE_FETCH, Job.PHASE_OPEN, Job.PHASE_WORK:
+				job.phase = Job.PHASE_FETCH
+				if not job.carried_id.is_empty():
+					job.phase = Job.PHASE_DELIVER
+					continue
+				var it := _reserved_item(job)
+				if it == null:
+					_release_item(job)
+					var nid := _find_food(npc)
+					if nid.is_empty():
+						_give_up(job, REASON_NO_MATERIAL)
+						return {"action": ACTION_NONE}
+					_reserve(nid, job)
+					it = inventory.get_item(nid)
+				var at := _item_pos(it)
+				var goals := _reach_positions(at, -1)
+				job._fetch_tile = at
+				if goals.is_empty():
+					_set_item_unreachable(it.id, _tick)
+					_release_item(job)
+					return {"action": ACTION_WAIT}
+				if not goals.has(npc.tile):
+					return {"action": ACTION_GOTO, "goals": goals}
+				var per_kg := maxf(nutrition(it.material), 0.001)
+				var want := clampf((100.0 - patient.hunger) / per_kg, 0.05, Inventory.CARRY_CAPACITY_KG)
+				var r: CommandResult
+				if it.holder == Inventory.Holder.CRATE:
+					r = inventory.take_from_crate(it.id, npc.id, want)
+				else:
+					r = inventory.pick_up(it.id, npc.id, want)
+				_release_item(job)
+				if not r.ok:
+					return {"action": ACTION_WAIT}
+				job.carried_id = r.data["item_id"]
+				job.phase = Job.PHASE_DELIVER
+			Job.PHASE_DELIVER:
+				var carried := inventory.carried_by(npc.id)
+				if carried == null or carried.id != job.carried_id:
+					job.carried_id = ""
+					job.phase = Job.PHASE_FETCH
+					continue
+				var goals := _work_goals(job)
+				if goals.is_empty():
+					_give_up(job, REASON_UNREACHABLE)
+					return {"action": ACTION_NONE}
+				if not goals.has(npc.tile):
+					return {"action": ACTION_GOTO, "goals": goals}
+				var gain := carried.kg * nutrition(carried.material)
+				if inventory.consume_item(carried.id, carried.kg).ok:
+					patient.hunger = minf(100.0, patient.hunger + gain)
+				job.carried_id = ""
+				_remove_finished(job)
+				return {"action": ACTION_NONE}
+			_:
+				job.phase = Job.PHASE_FETCH
+	return {"action": ACTION_WAIT}
