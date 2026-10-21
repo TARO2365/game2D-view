@@ -2,10 +2,15 @@ class_name NpcView
 extends Node2D
 ## Body of one colonist. Node origin = bottom-centre of the feet tile (D-003
 ## pivot). Reads the Npc and Inventory every frame (Colony does not emit per
-## tick); never mutates. Draws a production sprite sheet when one exists
-## (ArtLibrary, ASSET_SPEC §6), otherwise the procedural chibi rig
-## (ProcFigure, D-020) whose parts are recorded once and only moved per
-## animation frame — cheap enough for 100 NPCs.
+## tick); never mutates.
+##
+## Two looks (D-027): the role's production sprite sheet for animations that
+## exist (walk, dig, ...), drawn by a Sprite2D whose frame follows the ground
+## actually covered (feet do not slide) and whose per-frame head wobble is
+## cancelled; idle uses a still walk frame with breathing / weight shift.
+## Animations without a sheet use the procedural chibi rig (ProcFigure),
+## posed continuously (smooth at any frame rate). Facing flips are animated.
+## Per frame only transforms change — no redraws — so 100 NPCs stay cheap.
 
 const BODY_HEIGHT_TILES := 2.5    # D-003: ~2.5-tile sprite
 const BAR_WIDTH_TILES := 0.8      # PLACEHOLDER
@@ -18,12 +23,23 @@ const LABEL_FONT_SIZE := 18       # PLACEHOLDER
 const SMOOTH_RATE := 18.0
 ## Farther than this (tiles) the view snaps instead of sliding (load, teleport).
 const SNAP_TILES := 3.0
-## One full walk cycle per this many tiles travelled.
+## Rig: one full walk cycle per this many tiles travelled.
 const STRIDE_TILES := 1.0
 ## Seconds a work animation keeps playing after work_progress last changed
 ## (stops the swing while the game is paused).
 const WORK_HOLD_SEC := 0.35
+## Rig work swings per second.
+const WORK_CYCLES_PER_SEC := 1.6
 const IDLE_BLINK_PERIOD := 3.2
+## Idle breathing / weight-shift periods (s) and amplitudes.
+const BREATH_PERIOD := 2.6
+const BREATH_AMOUNT := 0.014
+const SWAY_PERIOD := 5.3
+const SWAY_SKEW := 0.018
+## Facing flip speed (scale units per second; 2 = one full flip).
+const FLIP_RATE := 12.0
+## Rate (1/s) at which the head-stabilising x offset follows its target.
+const STABILISE_RATE := 20.0
 ## Frames to wait for the rig bake before keeping the vector parts.
 const BAKE_MAX_FRAMES := 4
 ## Atlas pixel that must be opaque once the bake rendered (torso centre).
@@ -49,20 +65,26 @@ var _color := Color.WHITE
 var _look: Dictionary = {}
 var _body: Node2D          # procedural rig root (scaled for tile size / facing)
 var _parts: Dictionary = {}
+var _sheet_root: Node2D    # production sheet: sprite + carried chunk
+var _sprite: Sprite2D
+var _sheet_carry: ProcFigure.Part
+var _cur_sheet: Texture2D
 var _overlay: Node2D       # selection + work bar, above the body
-var _pose_key := ""
-var _sheet_key := ""
 var _bar := -1
 var _facing := 1.0
+var _facing_vis := 1.0
+var _dx := 0.0
 var _anim: StringName = &"idle"
 var _frame := 0
+var _uses_sheet := false
+var _rig_key := ""
 var _walk_dist := 0.0
 var _work_time := 0.0
 var _work_hold := 0.0
 var _last_work := 0.0
 var _idle_time := 0.0
 var _carry_color := Color(0, 0, 0, 0)
-var _sheets: Dictionary = {}  # anim -> Texture2D or null
+var _sheets: Dictionary = {}  # anim -> ArtLibrary.npc_anim_sheet() result
 var _bake_vp: SubViewport
 var _bake_tries := 0
 var _baked := false
@@ -75,7 +97,7 @@ func setup(n: Npc, inv: Inventory, reg: TileRegistry, px: int) -> void:
 	tile_px = px
 	_color = color_for_id(n.id)
 	_look = ProcFigure.look_for_id(n.id, _color)
-	# De-synchronise idle blinks between NPCs.
+	# De-synchronise idle blinks / breathing between NPCs.
 	_idle_time = fposmod(absi(n.id.hash()) * 0.137, IDLE_BLINK_PERIOD)
 
 
@@ -84,6 +106,16 @@ func _ready() -> void:
 	_body.name = "Body"
 	add_child(_body)
 	_parts = ProcFigure.build(_body, _look)
+	_sheet_root = Node2D.new()
+	_sheet_root.name = "Sheet"
+	add_child(_sheet_root)
+	_sprite = Sprite2D.new()
+	_sprite.centered = false
+	_sprite.offset = Vector2(-ArtLibrary.NPC_CELL.x / 2.0, -ArtLibrary.NPC_CELL.y)
+	_sheet_root.add_child(_sprite)
+	_sheet_carry = ProcFigure.Part.new()
+	_sheet_carry.painter = func(ci: ProcFigure.Part) -> void: ProcFigure.draw_chunk(ci, ArtLibrary.SHEET_CARRY_AT, 14.0, ci.tint, 7)
+	_sheet_root.add_child(_sheet_carry)
 	var ov := ProcFigure.Part.new()
 	ov.name = "Overlay"
 	ov.painter = _draw_overlay
@@ -100,7 +132,7 @@ func _ready() -> void:
 	label.position = Vector2(-LABEL_WIDTH_PX / 2.0, -BODY_HEIGHT_TILES * tile_px - BAR_GAP_PX - LABEL_FONT_SIZE - 14)
 	add_child(label)
 	position = target_position()
-	sync()
+	sync(0.0)
 	_bake_rig()
 
 
@@ -109,7 +141,7 @@ func _ready() -> void:
 ## polygon as its own draw call, textured rects batch. Skipped headless
 ## (tests), where the vector parts are kept.
 func _bake_rig() -> void:
-	if DisplayServer.get_name() == "headless" or uses_sheets():
+	if DisplayServer.get_name() == "headless":
 		return
 	_bake_vp = SubViewport.new()
 	_bake_vp.name = "RigBake"
@@ -150,6 +182,7 @@ func _process(delta: float) -> void:
 		_walk_dist += moved.length()
 	if absf(moved.x) > 0.05:
 		_facing = signf(moved.x)
+	_facing_vis = move_toward(_facing_vis, _facing, delta * FLIP_RATE)
 	_idle_time += delta
 	if npc.work_progress != _last_work:
 		_last_work = npc.work_progress
@@ -157,35 +190,94 @@ func _process(delta: float) -> void:
 	if _work_hold > 0.0:
 		_work_hold -= delta
 		_work_time += delta
-	sync()
+	sync(delta)
 
 
-## Pulls the NPC fields that affect drawing; touches nodes only on change.
-func sync() -> void:
+## Pulls the NPC fields that affect drawing and updates transforms / frames.
+func sync(delta: float = 0.0) -> void:
 	if label.text != npc.nickname:
 		label.text = npc.nickname
 	var carried := inventory.carried_by(npc.id)
 	var material: StringName = carried.material if carried else &""
 	var vertical := npc.prev_tile.x == npc.tile.x and npc.prev_tile.y != npc.tile.y
 	_anim = anim_for(npc.state, npc.is_moving(), vertical, carried != null)
-	_frame = _frame_for(_anim)
-	var key := "%s|%d|%d|%s" % [_anim, _frame, int(_facing), material]
-	if key != _pose_key:
-		_pose_key = key
-		_carry_color = material_art_color(registry, material) if carried else ProcFigure.NO_CARRY
-		var k := tile_px / 64.0
-		var sheet := _sheet(_anim)
-		_body.visible = sheet == null
-		if sheet == null:
-			_body.scale = Vector2(k * _facing, k)
-			ProcFigure.apply_pose(_parts, _anim, _frame, _carry_color)
-		if sheet != null or _sheet_key != "":
-			_sheet_key = key if sheet else ""
-			queue_redraw()
+	_carry_color = material_art_color(registry, material) if carried else ProcFigure.NO_CARRY
+	var info := _sheet_info(_anim)
+	_uses_sheet = info.has("sheet")
+	_body.visible = not _uses_sheet
+	_sheet_root.visible = _uses_sheet
+	if _uses_sheet:
+		_sync_sheet(info, delta)
+	else:
+		_sync_rig()
 	var bar := roundi(npc.work_progress * 50.0) if (npc.state == &"working" or npc.work_progress > 0.0) else -1
 	if bar != _bar:
 		_bar = bar
 		_overlay.queue_redraw()
+
+
+func _sync_sheet(info: Dictionary, delta: float) -> void:
+	var sheet: Texture2D = info.sheet
+	var count := ArtLibrary.frame_count(sheet, info.anim)
+	if sheet != _cur_sheet:
+		_cur_sheet = sheet
+		_sprite.texture = sheet
+		_sprite.hframes = count
+		var cell := ArtLibrary.cell_size(info.anim)
+		_sprite.offset = Vector2(-cell.x / 2.0, -cell.y)
+	var metrics := ArtLibrary.sheet_metrics(role(), info.anim)
+	var k := tile_px / 64.0
+	if info.hold:
+		_frame = info.frame
+	else:
+		match _anim:
+			&"walk", &"carry", &"climb":
+				# One loop of the sheet per cycle_px of ground: feet stay planted.
+				_frame = floori(_walk_dist / (float(metrics.cycle_px) * k / count)) % count
+			&"idle", &"sleep", &"fall":
+				_frame = idle_frame(_idle_time, count)
+			_:
+				_frame = floori(_work_time * ArtLibrary.ANIM_FPS.get(info.anim, 8.0)) % count
+	_sprite.frame = _frame
+	var dxs: PackedFloat32Array = metrics.dx
+	var target: float = dxs[_frame] if _frame < dxs.size() else 0.0
+	_dx = target if delta <= 0.0 else lerpf(_dx, target, 1.0 - exp(-STABILISE_RATE * delta))
+	_sprite.position.x = _dx
+	var sx := 1.0
+	var sy := 1.0
+	var skew := 0.0
+	if _anim == &"idle":
+		# Idle: breathing (stretch from the feet up) and a slow weight shift.
+		var b := sin(TAU * _idle_time / BREATH_PERIOD)
+		sy = 1.0 + BREATH_AMOUNT * b
+		sx = 1.0 - BREATH_AMOUNT * 0.5 * b
+		skew = SWAY_SKEW * sin(TAU * _idle_time / SWAY_PERIOD)
+	_sheet_root.scale = Vector2(k * _facing_vis * sx, k * sy)
+	_sheet_root.skew = skew
+	var holding := _anim == &"carry" and _carry_color.a > 0.0
+	_sheet_carry.visible = holding
+	if holding:
+		_sheet_carry.tint = _carry_color
+
+
+func _sync_rig() -> void:
+	var phase := 0.0
+	match _anim:
+		&"walk", &"carry", &"climb":
+			phase = _walk_dist / (tile_px * STRIDE_TILES)
+		&"dig", &"build":
+			phase = _work_time * WORK_CYCLES_PER_SEC
+		_:
+			phase = _idle_time / BREATH_PERIOD
+	var blink := fposmod(_idle_time, IDLE_BLINK_PERIOD) > IDLE_BLINK_PERIOD - 0.15
+	_frame = floori(fposmod(phase, 1.0) * ProcFigure.FRAMES.get(_anim, 1))
+	var k := tile_px / 64.0
+	_body.scale = Vector2(k * _facing_vis, k)
+	# Re-pose only when the pose visibly changes (~120 steps per loop).
+	var key := "%s|%d|%s|%s" % [_anim, roundi(fposmod(phase, 1.0) * 120.0), _carry_color.to_html(), blink]
+	if key != _rig_key:
+		_rig_key = key
+		ProcFigure.apply_pose_at(_parts, _anim, phase, _carry_color, blink)
 
 
 func target_position() -> Vector2:
@@ -205,56 +297,20 @@ func current_frame() -> int:
 	return _frame
 
 
-## Production sheet for an animation of this NPC's role (own sheet or the
-## ArtLibrary fallback, e.g. idle -> a still walk frame), or null when the
-## role has no sheets at all (procedural rig). Cached per view.
-func _sheet(anim: StringName) -> Texture2D:
-	return _sheet_info(anim).get("sheet")
+## True when the current animation is drawn from a production sheet.
+func uses_sheets() -> bool:
+	return _uses_sheet
+
+
+## Visual facing (-1..1, animated through 0 when turning).
+func facing_visual() -> float:
+	return _facing_vis
 
 
 func _sheet_info(anim: StringName) -> Dictionary:
 	if not _sheets.has(anim):
 		_sheets[anim] = ArtLibrary.npc_anim_sheet(role(), anim)
 	return _sheets[anim]
-
-
-## True when this NPC is drawn from production sheets.
-func uses_sheets() -> bool:
-	return _sheet(&"walk") != null
-
-
-func _frame_for(anim: StringName) -> int:
-	var info := _sheet_info(anim)
-	var sheet: Texture2D = info.get("sheet")
-	if sheet and info.hold:
-		return info.frame
-	var count: int = ArtLibrary.frame_count(sheet) if sheet else ProcFigure.FRAMES.get(anim, 1)
-	match anim:
-		&"walk", &"carry", &"climb":
-			return floori(_walk_dist / (tile_px * STRIDE_TILES / count)) % count
-		&"dig", &"build":
-			return floori(_work_time * ArtLibrary.ANIM_FPS.get(info.get("anim", anim), 8.0)) % count
-	if sheet:
-		return floori(_idle_time * ArtLibrary.ANIM_FPS.get(info.anim, 4.0)) % count
-	# Procedural idle: gentle breathing bob, blink once per period.
-	if fposmod(_idle_time, IDLE_BLINK_PERIOD) > IDLE_BLINK_PERIOD - 0.15:
-		return 2
-	return 1 if fposmod(_idle_time, 1.6) > 0.8 else 0
-
-
-## Production sheet frame (only when a sheet exists for the current anim).
-func _draw() -> void:
-	var sheet := _sheet(_anim)
-	if sheet == null:
-		return
-	var k := tile_px / 64.0
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2(k * _facing, k))
-	var cell := Vector2(ArtLibrary.NPC_CELL)
-	draw_texture_rect_region(sheet, Rect2(Vector2(-cell.x / 2.0, -cell.y), cell),
-			ArtLibrary.frame_region(_frame, ArtLibrary.frame_count(sheet)))
-	if _carry_color.a > 0.0 and _anim == &"carry":
-		ProcFigure.draw_chunk(self, ArtLibrary.SHEET_CARRY_AT, 14.0, _carry_color, 7)
-	draw_set_transform(Vector2.ZERO)
 
 
 func _draw_overlay(ci: Node2D) -> void:
@@ -274,6 +330,23 @@ func _draw_overlay(ci: Node2D) -> void:
 
 
 # --- Pure helpers (unit tested) -------------------------------------------
+
+## Frame of a slow "still" sheet (idle / sleep / fall) at time t: the owner's
+## 4-frame idle sheets have the blink in frame 1, which is shown only briefly
+## once per loop; other frames are held about a second each (2-frame sheets
+## alternate slowly).
+static func idle_frame(t: float, count: int) -> int:
+	if count == 4:
+		var durations := [1.1, 0.14, 1.0, 1.0]
+		var total := 3.24
+		var u := fposmod(t, total)
+		for i in 4:
+			if u < durations[i]:
+				return i
+			u -= durations[i]
+		return 3
+	return floori(t / 1.2) % maxi(count, 1)
+
 
 ## Animation for the NPC's visible state (ASSET_SPEC §6 animation list).
 static func anim_for(state: StringName, moving: bool, vertical: bool, carrying: bool) -> StringName:

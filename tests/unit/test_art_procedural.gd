@@ -113,6 +113,22 @@ func test_rig_poses_move_parts_without_redraw_logic() -> void:
 	assert_true((parts[&"pickaxe"] as Node2D).visible, "pickaxe while digging")
 
 
+func test_pose_at_is_continuous() -> void:
+	# Keys at phase 0 and 0.25 of the 4-key walk; halfway is in between.
+	var a: float = ProcFigure.pose_at(&"walk", 0.0)[&"leg_f"]
+	var b: float = ProcFigure.pose_at(&"walk", 0.25)[&"leg_f"]
+	var mid: float = ProcFigure.pose_at(&"walk", 0.125)[&"leg_f"]
+	assert_almost_eq(a, float(ProcFigure.pose(&"walk", 0)[&"leg_f"]), 0.001)
+	assert_almost_eq(b, float(ProcFigure.pose(&"walk", 1)[&"leg_f"]), 0.001)
+	assert_between(mid, minf(a, b), maxf(a, b))
+	# Small phase steps give small pose changes (no snapping).
+	var prev: float = ProcFigure.pose_at(&"dig", 0.0)[&"arm_f"]
+	for i in range(1, 101):
+		var cur: float = ProcFigure.pose_at(&"dig", i / 100.0)[&"arm_f"]
+		assert_lt(absf(cur - prev), 0.15, "smooth at step %d" % i)
+		prev = cur
+
+
 func test_atlas_slots_fit_and_do_not_overlap() -> void:
 	var atlas := Rect2(Vector2.ZERO, Vector2(ProcFigure.ATLAS_SIZE))
 	var rects: Array[Rect2] = []

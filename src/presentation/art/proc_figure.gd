@@ -198,9 +198,39 @@ static func use_atlas(parts: Dictionary, atlas: Texture2D) -> void:
 		part.queue_redraw()
 
 
+## Continuous pose at `phase` (0..1 = one loop): neighbouring key poses are
+## blended with smoothstep easing, so the rig moves smoothly at any frame
+## rate instead of snapping between 4 keys (D-027).
+static func pose_at(anim: StringName, phase: float) -> Dictionary:
+	var n: int = 2 if anim == &"idle" else FRAMES.get(anim, 1)
+	var f := fposmod(phase, 1.0) * n
+	var i := floori(f)
+	var t := f - i
+	t = t * t * (3.0 - 2.0 * t)
+	var a := pose(anim, i % n)
+	var b := pose(anim, (i + 1) % n)
+	var p := a.duplicate()
+	for key in BLEND_KEYS:
+		p[key] = lerpf(float(a[key]), float(b[key]), t)
+	return p
+
+
+const BLEND_KEYS: Array[StringName] = [&"bob", &"leg_b", &"leg_f", &"lift_b", &"lift_f", &"arm_b", &"arm_f"]
+
+
+## Smooth variant of apply_pose(); `blink` closes the eyes.
+static func apply_pose_at(parts: Dictionary, anim: StringName, phase: float, carry: Color, blink: bool) -> void:
+	var p := pose_at(anim, phase)
+	p[&"blink"] = blink
+	_apply(parts, p, carry)
+
+
 ## Moves the parts to a frame's pose. `carry` alpha 0 hides the held item.
 static func apply_pose(parts: Dictionary, anim: StringName, frame: int, carry: Color) -> void:
-	var p := pose(anim, frame)
+	_apply(parts, pose(anim, frame), carry)
+
+
+static func _apply(parts: Dictionary, p: Dictionary, carry: Color) -> void:
 	var up := Vector2(0, p[&"bob"])
 	var arm_b: Node2D = parts[&"arm_b"]
 	var arm_f: Node2D = parts[&"arm_f"]
