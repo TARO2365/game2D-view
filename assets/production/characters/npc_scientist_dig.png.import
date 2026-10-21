@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://pdd7y0w42sbj"
+path="res://.godot/imported/npc_scientist_dig.png-47a5a3f359547fafc50cddebd4fe327f.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_scientist_dig.png"
+dest_files=["res://.godot/imported/npc_scientist_dig.png-47a5a3f359547fafc50cddebd4fe327f.image"]
+
+[params]
+

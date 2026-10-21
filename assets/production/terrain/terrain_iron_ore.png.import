@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://bcpqvmuf4i2xi"
+path="res://.godot/imported/terrain_iron_ore.png-c70308ab7a4c9c1f7f918e5dfda04a74.image"
+
+[deps]
+
+source_file="res://assets/production/terrain/terrain_iron_ore.png"
+dest_files=["res://.godot/imported/terrain_iron_ore.png-c70308ab7a4c9c1f7f918e5dfda04a74.image"]
+
+[params]
+

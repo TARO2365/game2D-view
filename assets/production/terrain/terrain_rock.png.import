@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://bjpuxday2s4ot"
+path="res://.godot/imported/terrain_rock.png-a4e31b46a6406eb1bedd335d55d5af6c.image"
+
+[deps]
+
+source_file="res://assets/production/terrain/terrain_rock.png"
+dest_files=["res://.godot/imported/terrain_rock.png-a4e31b46a6406eb1bedd335d55d5af6c.image"]
+
+[params]
+

@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://ro6xpevyth7v"
+path="res://.godot/imported/terrain_crystal.png-175bc3bcf8460366a6e7479d1f83fa8c.image"
+
+[deps]
+
+source_file="res://assets/production/terrain/terrain_crystal.png"
+dest_files=["res://.godot/imported/terrain_crystal.png-175bc3bcf8460366a6e7479d1f83fa8c.image"]
+
+[params]
+

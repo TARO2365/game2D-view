@@ -63,11 +63,37 @@ func test_production_terrain_strip_is_used_and_scaled() -> void:
 
 
 func test_npc_sheet_frames() -> void:
-	_solid(96 * 6, 192, Color.RED).save_png(TEST_DIR + "characters/npc_miner_walk.png")
+	_solid(128 * 6, 192, Color.RED).save_png(TEST_DIR + "characters/npc_miner_walk.png")
 	var sheet := ArtLibrary.npc_sheet(&"miner", &"walk")
 	assert_not_null(sheet)
 	assert_eq(ArtLibrary.frame_count(sheet), 6)
-	assert_eq(ArtLibrary.frame_region(7, 6), Rect2(96, 0, 96, 192), "frames wrap")
+	assert_eq(ArtLibrary.frame_region(7, 6), Rect2(128, 0, 128, 192), "frames wrap")
+
+
+func test_missing_anims_fall_back_to_walk() -> void:
+	var walk := Image.create(128 * 4, 192, false, Image.FORMAT_RGBA8)
+	for f in 4:  # frame 2 is the narrowest (standing)
+		var half := 10 if f == 2 else 40
+		walk.fill_rect(Rect2i(f * 128 + 64 - half, 20, half * 2, 172), Color.RED)
+	walk.save_png(TEST_DIR + "characters/npc_miner_walk.png")
+	var idle := ArtLibrary.npc_anim_sheet(&"miner", &"idle")
+	assert_eq(idle.anim, &"walk")
+	assert_true(idle.hold, "idle shows one still frame")
+	assert_eq(idle.frame, 2, "the standing (narrowest) frame")
+	var carry := ArtLibrary.npc_anim_sheet(&"miner", &"carry")
+	assert_eq(carry.anim, &"walk")
+	assert_false(carry.hold, "carry borrows the animated walk")
+	assert_eq(ArtLibrary.npc_anim_sheet(&"miner", &"build").anim, &"walk")
+	assert_eq(ArtLibrary.npc_anim_sheet(&"cook", &"idle"), {}, "no sheets -> procedural rig")
+
+
+func test_own_sheet_wins_over_fallback() -> void:
+	_solid(128 * 6, 192, Color.RED).save_png(TEST_DIR + "characters/npc_miner_walk.png")
+	_solid(128 * 4, 192, Color.BLUE).save_png(TEST_DIR + "characters/npc_miner_climb.png")
+	var climb := ArtLibrary.npc_anim_sheet(&"miner", &"climb")
+	assert_eq(climb.anim, &"climb")
+	assert_eq(ArtLibrary.frame_count(climb.sheet), 4)
+	DirAccess.remove_absolute(TEST_DIR + "characters/npc_miner_climb.png")
 
 
 func test_undersized_sheet_is_rejected() -> void:

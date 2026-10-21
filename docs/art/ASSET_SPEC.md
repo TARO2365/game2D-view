@@ -27,7 +27,7 @@ assets/production/
   structures/  ladder.png                    # 64x64, transparent
   backgrounds/ backwall_dug.png              # 256x64 strip, opaque (wiring pending, see §5.3)
                sky_surface.png               # 1920x540, opaque (wiring pending)
-  characters/  npc_<role>_<anim>.png         # one row of 96x192 cells
+  characters/  npc_<role>_<anim>.png         # one row of 128x192 cells
   items/       item_<material>.png           # 64x64, transparent
   buildings/   building_<key>.png            # size per §7, transparent
   ui/          icon_<tool>.png               # 64x64, transparent
@@ -100,10 +100,10 @@ silhouette). The horizon is at the bottom 25 %.
 > Using these two files needs a small change there. The files can be delivered before that change.
 
 ## 6. Characters (NPCs)
-- **Cell 96 × 192 px.** The character is about **160 px tall** (2.5 tiles), centred horizontally, feet on the
+- **Cell 128 × 192 px** (2 × 3 tiles; widened from 96 in batch 1 so pickaxe swings fit). The character is about **160 px tall** (2.5 tiles), centred horizontally, feet on the
   bottom edge (pivot = bottom-centre). The head is about 40 % of the height (chibi). Top 30 px of headroom is for
   hats and helmets.
-- One sheet per role per animation: `characters/npc_<role>_<anim>.png`. Width = frames × 96. Height = 192.
+- One sheet per role per animation: `characters/npc_<role>_<anim>.png`. Width = frames × 128. Height = 192.
 - Outfits are **baked into each role sheet** (no runtime layering in V1), because an image AI cannot keep separate
   layers aligned. Skin and hair diversity is out of scope for V1 sheets. Use the default look from the reference.
 - Right-facing, 3/4 side view like the "Animation Examples" strip on `04_miner_sheet.png`.
@@ -143,21 +143,49 @@ The procedural fallback uses the same roles, chosen per NPC id (cosmetic only, n
 Buildings are transparent, bottom-aligned (the floor line is the bottom edge), lit from the top-left, outlined.
 Wiring of buildings and icons into the game happens with the M3 building work (UI Agent). The loader names already exist.
 
-## 8. UI icons (toolbar)
+## 8. UI icons (toolbar, 11)
 `ui/icon_<tool>.png`, 64 × 64, transparent, white/cream glyph (`#f2e6d0`) with a dark outline, a single readable
-silhouette that works at 24 px. Tools: `select`, `dig`, `build`, `ladder`, `stockpile`, `clear_stockpile`,
-`priority`, `cancel` (matching the toolbar order). Style reference: the left command bar on `01`/`02`.
+silhouette that works at 24 px. Icons, in toolbar order (names used by `ui/toolbar.gd`): `select`, `dig`,
+`build` (build wall), `ladder`, `build_menu` (opens the building menu), `deconstruct`, `stockpile`,
+`clear_stockpile`, `priority`, `cancel`, and `rooms` (rooms overlay toggle). Style reference: the left command bar on
+`01`/`02`.
 
 ## 9. Godot import settings
-Set by the Asset Agent when the files arrive (default `.import` settings per folder):
-| Setting | Value |
-|---|---|
-| Importer | Texture2D, `compress/mode = Lossless` (PNG kept, exact pixels; VRAM compression blurs outlines) |
-| Mipmaps | **off** for terrain, characters, items and UI. On for `backgrounds/` only |
-| `process/fix_alpha_border` | on (prevents dark fringes on transparent sprites) |
-| `process/premult_alpha` | off |
-| Filter | project default (linear) for now. Pixel-exact nearest is not used because the art is painterly (OQ-08 stays open) |
-| Repeat | off |
+All files under `assets/production/` are imported as **Image** resources (`importer="image"`), not as textures.
+`ArtLibrary` turns them into `ImageTexture`s at runtime. Reasons: terrain and ladder tiles are composited into the
+TileSet atlas on the CPU, and reading pixels back from a GPU texture (`Texture2D.get_image()`) is unreliable in
+the Web build. Image import keeps the exact PNG pixels (lossless) with no mipmaps. `tools/art_import.gd` writes the
+`.import` stub for every file it produces. Filter: project default (linear); pixel-exact nearest filtering is not
+used because the art is painterly (OQ-08 stays open).
+
+## 9b. Import pipeline (`tools/art_import.gd`)
+Owner images go to `assets/incoming/` (git-ignored). Then run:
+`godot --headless --path . -s res://tools/art_import.gd -- --src <incoming dir>`. It is safe to re-run.
+- **NPC sheets:**
+  - **Slicing:** the frame count is the number of 1:2 cells in the sheet. Every opaque blob goes to the frame
+    whose column contains its centroid, so tools that overhang a neighbour stay with their own figure. Dust under
+    0.3 % of the largest blob is dropped.
+  - **Scale:** each role's `walk` sheet sets the scale: head top to feet = 150 px (cook +22 px for the hat).
+    The role's other sheets match the walk sheet's head width, so crouching or stretched poses keep the same
+    character size.
+  - **Placement:** feet go on the bottom edge and the body (median x of the torso band) on the cell centre.
+  - **Cleanup:** faint alpha below 24 is dropped, specks smaller than 1 % of the figure are removed, and
+    semi-transparent edge pixels take the colour of their opaque neighbours (removes dark and red fringes).
+- **Terrain:**
+  - Each variant is downsampled to 256 px and made seamless with a minimum-error cut through a 16 % wrap overlap
+    (no cross-fade ghosting).
+  - Variants 2–4 then get variant 1's outer 22 % border, again via minimum-error cuts, so any two variants can sit
+    next to each other.
+  - Lanczos resampling to 64 px, then packed into the 4-variant strip.
+- **Ladder:** cropped to exactly 3 rung periods (half a period above the first rung) so stacked tiles keep even
+  spacing, then scaled to 64 × 64.
+
+**Fallbacks in game:** a missing animation uses the role's sheet chain `ArtLibrary.NPC_FALLBACK`:
+- idle, sleep and fall: a still standing frame of `walk`
+- carry and climb: `walk` (the game draws the carried chunk)
+- dig and build: each other, then `walk`
+
+A role without any sheet uses the procedural rig. A missing terrain material or ladder uses the procedural tile.
 
 ## 10. Acceptance checklist (per file)
 1. Exact size; for sheets, width is a multiple of the cell width.

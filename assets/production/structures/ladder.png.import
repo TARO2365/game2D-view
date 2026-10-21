@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://bwhti8p02uq7q"
+path="res://.godot/imported/ladder.png-1a995839077500d42f41842ea57500f3.image"
+
+[deps]
+
+source_file="res://assets/production/structures/ladder.png"
+dest_files=["res://.godot/imported/ladder.png-1a995839077500d42f41842ea57500f3.image"]
+
+[params]
+

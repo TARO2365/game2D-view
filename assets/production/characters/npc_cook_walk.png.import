@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://bidbu51hba32s"
+path="res://.godot/imported/npc_cook_walk.png-e679ca51c0abc0e95a640e3a3bd86757.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_cook_walk.png"
+dest_files=["res://.godot/imported/npc_cook_walk.png-e679ca51c0abc0e95a640e3a3bd86757.image"]
+
+[params]
+

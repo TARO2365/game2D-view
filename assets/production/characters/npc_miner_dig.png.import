@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://ctnn1ll6jjj2x"
+path="res://.godot/imported/npc_miner_dig.png-9c3fe1674c558caeefce40e72e90fb0a.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_miner_dig.png"
+dest_files=["res://.godot/imported/npc_miner_dig.png-9c3fe1674c558caeefce40e72e90fb0a.image"]
+
+[params]
+

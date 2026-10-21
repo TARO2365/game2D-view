@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://b8bkhd7uev1te"
+path="res://.godot/imported/npc_cook_dig.png-d5e60eea0aa2f334c9f04a74cdaeecdc.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_cook_dig.png"
+dest_files=["res://.godot/imported/npc_cook_dig.png-d5e60eea0aa2f334c9f04a74cdaeecdc.image"]
+
+[params]
+
