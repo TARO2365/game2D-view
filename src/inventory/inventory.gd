@@ -330,6 +330,77 @@ func empty_crate_to_ground(building_id: String, tile: Vector2i) -> CommandResult
 	return CommandResult.success({"kg": total, "item_ids": ids})
 
 
+## Eating (M4a §4): removes kg from the stack an NPC holds and records it as
+## consumed. Asking for the whole stack (within KG_EPSILON) removes the item.
+## data: {item_id, kg (actually consumed), remaining_kg, removed}.
+func consume_item(item_id: String, kg: float) -> CommandResult:
+	var it: ItemStack = _items.get(item_id)
+	if it == null:
+		return CommandResult.failure(&"unknown_item", "Item %s does not exist" % item_id)
+	if it.holder != Holder.NPC:
+		return CommandResult.failure(&"not_carried", "Item %s is not held by an NPC" % item_id)
+	if not _valid_kg(kg):
+		return CommandResult.failure(&"invalid_kg", "Nothing to consume (kg <= 0)")
+	if kg > it.kg + KG_EPSILON:
+		return CommandResult.failure(&"not_enough", "%s has only %.3f kg" % [item_id, it.kg],
+				{"available_kg": it.kg})
+	var removed := kg >= it.kg - KG_EPSILON
+	var eaten := it.kg if removed else kg
+	_consumed[it.material] = float(_consumed.get(it.material, 0.0)) + eaten
+	if removed:
+		_items.erase(it.id)
+		_carried.erase(it.holder_id)
+		_all_dirty = true
+	else:
+		it.kg -= eaten
+	items_changed.emit(it.id)
+	return CommandResult.success({"item_id": it.id, "kg": eaten,
+			"remaining_kg": 0.0 if removed else it.kg, "removed": removed})
+
+
+## Production input (Kitchens.cook): consumes exactly kg of material from the
+## items delivered to SITE(job_id), oldest id first; the last stack is split
+## in place (keeps its id). Other materials and the rest stay at the site.
+## Fails without changing anything if the site holds less than kg.
+## data: {kg, item_ids (touched, ordered by id)}.
+func consume_from_site(job_id: String, material: StringName, kg: float) -> CommandResult:
+	if job_id.is_empty():
+		return CommandResult.failure(&"invalid_job", "No job given")
+	if not _valid_kg(kg):
+		return CommandResult.failure(&"invalid_kg", "Nothing to consume (kg <= 0)")
+	var list: Array[ItemStack] = []
+	var have := 0.0
+	for it in site_items(job_id):
+		if it.material == material:
+			list.append(it)
+			have += it.kg
+	if have + KG_EPSILON < kg:
+		return CommandResult.failure(&"missing_input", "Site %s has %.3f kg %s, needs %.3f" % [
+				job_id, have, material, kg], {"available_kg": have})
+	var left := kg
+	var eaten := 0.0
+	var ids: Array[String] = []
+	for it in list:
+		if left <= KG_EPSILON:
+			break
+		ids.append(it.id)
+		if it.kg <= left + KG_EPSILON:
+			left -= it.kg
+			eaten += it.kg
+			_unindex(it)
+			_items.erase(it.id)
+			_all_dirty = true
+		else:
+			it.kg -= left
+			eaten += left
+			left = 0.0
+			_touch(it)
+	_consumed[material] = float(_consumed.get(material, 0.0)) + eaten
+	for id in ids:
+		items_changed.emit(id)
+	return CommandResult.success({"kg": eaten, "item_ids": ids})
+
+
 # --- Persistence --------------------------------------------------------
 
 ## Plain-typed snapshot (survives var_to_bytes / bytes_to_var).
