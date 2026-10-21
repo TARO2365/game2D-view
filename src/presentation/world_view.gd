@@ -3,6 +3,12 @@ extends Node2D
 ## Visual streaming of terrain (spec §2): one TileMapLayer per chunk near the
 ## camera, pooled and recycled. Only presentation — WorldGrid stays the single
 ## source of truth and is never modified here.
+##
+## Rendering (D-027): with `smooth_terrain` on, each chunk is drawn by a
+## TerrainRenderer quad (world-space material textures, rounded organic edges,
+## outline/highlight, cavity and depth shading, ladders) and the chunk's
+## TileMapLayer is kept as cell data only (enabled = false; public API and
+## tests unchanged). With it off, the TileMapLayers draw as before (fallback).
 
 const MARGIN_CHUNKS := 1
 const SKY_COLOR := Color(0.17, 0.14, 0.22)
@@ -15,11 +21,42 @@ var grid: WorldGrid
 var tile_px := 64
 ## Number of chunk redraws caused by terrain edits (tests / HUD).
 var redraw_count := 0
+## Number of chunk data textures rewritten for the smooth renderer (incl.
+## neighbours whose border cells changed). Tests / bench.
+var terrain_updates := 0
+## Use the ONI-style shader renderer (false = per-tile TileMapLayer drawing).
+static var smooth_terrain := true
 
 var _tileset: TileSet
 var _layers: Dictionary = {}  # Vector2i chunk -> TileMapLayer
 var _pool: Array[TileMapLayer] = []
 var _range := Rect2i()
+var _terrain_mat: ShaderMaterial
+var _sky_top_color := Color(0, 0, 0, 0)
+var _quads: Dictionary = {}  # Vector2i chunk -> TerrainChunk
+var _quad_pool: Array = []
+
+
+## One chunk quad of the smooth renderer: draws its data texture with the
+## shared terrain material; the shader does the rest.
+class TerrainChunk extends Node2D:
+	var img: Image
+	var tex: ImageTexture
+	var size_px := 0.0
+
+	func set_data(data: PackedByteArray, n: int) -> void:
+		if img == null:
+			img = Image.create_from_data(n, n, false, Image.FORMAT_RGB8, data)
+			tex = ImageTexture.create_from_image(img)
+			(material as ShaderMaterial).set_shader_parameter(&"data_tex", tex)
+		else:
+			img.set_data(n, n, false, Image.FORMAT_RGB8, data)
+			tex.update(img)
+		queue_redraw()
+
+	func _draw() -> void:
+		if tex:
+			draw_texture_rect(tex, Rect2(0, 0, size_px, size_px), false)
 
 
 func setup(world_grid: WorldGrid, px: int) -> void:
@@ -30,6 +67,8 @@ func setup(world_grid: WorldGrid, px: int) -> void:
 func _ready() -> void:
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED  # backwall strip tiles
 	_tileset = PlaceholderTiles.build_tileset(grid.registry, tile_px)
+	if smooth_terrain:
+		_terrain_mat = TerrainRenderer.make_material(grid.registry, tile_px, float(grid.height * tile_px))
 	grid.tiles_changed.connect(_on_tiles_changed)
 	queue_redraw()
 
@@ -46,8 +85,11 @@ func _draw() -> void:
 		draw_set_transform(Vector2.ZERO)
 	else:
 		draw_rect(world, BACKWALL_COLOR)
+	# Sky reaches one row below the surface line so the rounded corners of the
+	# smooth terrain show sky, not the dug-area wall.
+	var extra := 1 if _terrain_mat != null else 0
 	for x in grid.width:
-		draw_rect(Rect2(x * tile_px, 0, tile_px, grid.surface_y[x] * tile_px), SKY_COLOR)
+		draw_rect(Rect2(x * tile_px, 0, tile_px, (grid.surface_y[x] + extra) * tile_px), SKY_COLOR)
 	var sky := sky_texture()
 	if sky != null:
 		_draw_sky(sky)
@@ -64,6 +106,14 @@ func sky_texture() -> Texture2D:
 ## Sky image behind the surface; each column is clipped at its own surface line.
 func _draw_sky(sky: Texture2D) -> void:
 	var size := sky.get_size()
+	if _sky_top_color.a == 0.0:
+		_sky_top_color = SKY_COLOR
+		var img := ArtLibrary.image(ArtLibrary.background_path(&"sky_surface"))
+		if img != null:
+			var band := img.get_region(Rect2i(0, 0, img.get_width(), mini(4, img.get_height())))
+			band.resize(1, 1, Image.INTERPOLATE_BILINEAR)
+			_sky_top_color = band.get_pixel(0, 0)
+			_sky_top_color.a = 1.0
 	# The image (scaled by SKY_SCALE) sits with its horizon on the average
 	# surface line, repeated horizontally. Above it, its top row is stretched
 	# up to the world top; below it, its bottom row continues down to each
@@ -77,7 +127,7 @@ func _draw_sky(sky: Texture2D) -> void:
 	var tile_w := size.x * s
 	for x in grid.width:
 		var x0 := float(x * tile_px)
-		var y1 := float(grid.surface_y[x] * tile_px)
+		var y1 := float((grid.surface_y[x] + (1 if _terrain_mat != null else 0)) * tile_px)
 		if y1 <= 0.0:
 			continue
 		var sx := fposmod(x0, tile_w)
@@ -92,8 +142,8 @@ func _sky_column(sky: Texture2D, dst: Rect2, src_x: float, top: float, s: float)
 	var sw := dst.size.x / s
 	var y0 := dst.position.y
 	var y1 := dst.end.y
-	if y0 < top:  # above the image: stretch its top row
-		draw_texture_rect_region(sky, Rect2(dst.position.x, y0, dst.size.x, minf(top, y1) - y0), Rect2(src_x, 0.0, sw, 1.0))
+	if y0 < top:  # above the image: its average top colour
+		draw_rect(Rect2(dst.position.x, y0, dst.size.x, minf(top, y1) - y0), _sky_top_color)
 	var a := maxf(y0, top)
 	var b := minf(y1, top + h * s)
 	if b > a:
@@ -126,6 +176,7 @@ func update_visible(view: Rect2) -> void:
 	for c in _layers.keys():
 		if not r.has_point(c):
 			_release(c)
+			_release_quad(c)
 	for cy in range(r.position.y, r.end.y):
 		for cx in range(r.position.x, r.end.x):
 			var c := Vector2i(cx, cy)
@@ -144,9 +195,43 @@ func _load_chunk(c: Vector2i) -> void:
 		layer = _pool.pop_back()
 		layer.visible = true
 	layer.position = Vector2(c * WorldGrid.CHUNK_SIZE * tile_px)
+	layer.enabled = _terrain_mat == null
 	layer.clear()
 	_fill(layer, c, grid.chunk_rect(c))
 	_layers[c] = layer
+	if _terrain_mat != null:
+		_load_quad(c)
+
+
+func _load_quad(c: Vector2i) -> void:
+	var q: TerrainChunk
+	if _quad_pool.is_empty():
+		q = TerrainChunk.new()
+		q.material = _terrain_mat.duplicate()  # own data_tex per chunk
+		q.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		q.texture_repeat = CanvasItem.TEXTURE_REPEAT_DISABLED
+		q.size_px = WorldGrid.CHUNK_SIZE * tile_px
+		add_child(q)
+	else:
+		q = _quad_pool.pop_back()
+		q.visible = true
+	q.position = Vector2(c * WorldGrid.CHUNK_SIZE * tile_px)
+	q.set_data(TerrainRenderer.chunk_data(grid, c), TerrainRenderer.data_size())
+	_quads[c] = q
+
+
+func _release_quad(c: Vector2i) -> void:
+	if not _quads.has(c):
+		return
+	var q: TerrainChunk = _quads[c]
+	_quads.erase(c)
+	q.visible = false
+	_quad_pool.append(q)
+
+
+## Smooth renderer data image of a loaded chunk (tests), or null.
+func get_terrain_image(c: Vector2i) -> Image:
+	return (_quads[c] as TerrainChunk).img if _quads.has(c) else null
 
 
 func _release(c: Vector2i) -> void:
@@ -179,3 +264,12 @@ func _on_tiles_changed(rect: Rect2i) -> void:
 		if _layers.has(c):
 			_fill(_layers[c], c, rect.intersection(grid.chunk_rect(c)))
 			redraw_count += 1
+	if _terrain_mat == null:
+		return
+	# Data textures include a 1-cell border (and the underground flag of the
+	# column), so neighbours touching the grown rect refresh too.
+	var grown := rect.grow(TerrainRenderer.BORDER).intersection(Rect2i(Vector2i.ZERO, grid.get_size()))
+	for c in grid.chunks_in_rect(grown):
+		if _quads.has(c):
+			(_quads[c] as TerrainChunk).set_data(TerrainRenderer.chunk_data(grid, c), TerrainRenderer.data_size())
+			terrain_updates += 1

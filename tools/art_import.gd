@@ -48,7 +48,9 @@ const BUILDING_SIZES := {
 }
 const TERRAIN_WORK := 256            # cross-fade resolution
 const TERRAIN_BLEND := 0.16           # overlap (fraction of the work tile) for the wrap seam
-const TERRAIN_BORDER := 0.22          # band shared by all variants (fraction of the tile)
+const HD_SIZE := 512                  # TerrainRenderer.HD_SIZE
+const HD_WORK := 608                  # HD_SIZE + wrap overlap
+const TERRAIN_BORDER := 0.22         # band shared by all variants (fraction of the tile)
 
 var src_dir := "res://assets/incoming"
 var dst_dir := "res://assets/production"
@@ -107,6 +109,10 @@ func _init() -> void:
 	if sky_path != "" and not measure_only:
 		var sky := _load(sky_path)
 		sky.resize(roundi(sky.get_width() * 540.0 / sky.get_height()), 540, Image.INTERPOLATE_LANCZOS)
+		# Repeats horizontally in game: min-error wrap seam (columns only).
+		var b := roundi(sky.get_width() * 0.12)
+		var wrapped := _wrap_cols(sky.get_data(), sky.get_width(), sky.get_height(), b)
+		sky = Image.create_from_data(sky.get_width() - b, sky.get_height(), false, Image.FORMAT_RGBA8, wrapped)
 		_save(sky, "backgrounds/sky_surface.png")
 		report.append("%s -> backgrounds/sky_surface.png" % sky_path.get_file())
 	if not measure_only:
@@ -481,7 +487,26 @@ func _clean_sprite(img: Image) -> void:
 
 # --- Terrain -------------------------------------------------------------------
 
+## High-res world-space material texture for the smooth terrain renderer
+## (D-027): variant 1 made seamless at HD_WORK px, then HD_SIZE px.
+func _import_terrain_hd(key: String, path: String) -> void:
+	var img := _load(path)
+	var side := mini(img.get_width(), img.get_height())
+	img = img.get_region(Rect2i(0, 0, side, side))
+	img.resize(HD_WORK, HD_WORK, Image.INTERPOLATE_LANCZOS)
+	img = seamless(img, HD_WORK - HD_SIZE)
+	var d := img.get_data()
+	for p in HD_SIZE * HD_SIZE:
+		d[p * 4 + 3] = 255
+	img.set_data(HD_SIZE, HD_SIZE, false, Image.FORMAT_RGBA8, d)
+	var rel := "terrain_hd/terrain_%s.png" % key
+	_save(img, rel)
+	report.append("terrain %s HD -> %s" % [key, rel])
+
+
 func _import_terrain(key: String, paths: Array) -> void:
+	if key != "backwall_dug":
+		_import_terrain_hd(key, paths[0])
 	var strip := Image.create(TILE * paths.size(), TILE, false, Image.FORMAT_RGBA8)
 	var first: Image = null
 	for i in paths.size():
