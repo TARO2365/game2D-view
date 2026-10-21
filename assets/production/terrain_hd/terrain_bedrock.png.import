@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://nnrk0aw2c11v"
+path="res://.godot/imported/terrain_bedrock.png-12035ea1888992d2f050d0b691d92477.image"
+
+[deps]
+
+source_file="res://assets/production/terrain_hd/terrain_bedrock.png"
+dest_files=["res://.godot/imported/terrain_bedrock.png-12035ea1888992d2f050d0b691d92477.image"]
+
+[params]
+

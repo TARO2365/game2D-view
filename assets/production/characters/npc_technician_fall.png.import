@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://dp4j4ww1jxco7"
+path="res://.godot/imported/npc_technician_fall.png-6ec1c418982c0f19505e7f2da0fbc0a0.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_technician_fall.png"
+dest_files=["res://.godot/imported/npc_technician_fall.png-6ec1c418982c0f19505e7f2da0fbc0a0.image"]
+
+[params]
+

@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://nxx4r85m63q0"
+path="res://.godot/imported/icon_clear_stockpile.png-869e2a721bb21f333f239e2a897a29a5.image"
+
+[deps]
+
+source_file="res://assets/production/ui/icon_clear_stockpile.png"
+dest_files=["res://.godot/imported/icon_clear_stockpile.png-869e2a721bb21f333f239e2a897a29a5.image"]
+
+[params]
+

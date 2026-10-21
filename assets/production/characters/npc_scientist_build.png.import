@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://cf8fyc53im4ab"
+path="res://.godot/imported/npc_scientist_build.png-06e3c7cc1b01f244b939a9cd31ab2589.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_scientist_build.png"
+dest_files=["res://.godot/imported/npc_scientist_build.png-06e3c7cc1b01f244b939a9cd31ab2589.image"]
+
+[params]
+

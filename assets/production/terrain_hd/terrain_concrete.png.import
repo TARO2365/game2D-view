@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://daqrmewd5rt5l"
+path="res://.godot/imported/terrain_concrete.png-e3c25cfd601d4459b28f36d52aa245c8.image"
+
+[deps]
+
+source_file="res://assets/production/terrain_hd/terrain_concrete.png"
+dest_files=["res://.godot/imported/terrain_concrete.png-e3c25cfd601d4459b28f36d52aa245c8.image"]
+
+[params]
+

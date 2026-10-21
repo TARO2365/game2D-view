@@ -199,6 +199,8 @@ Negative: [NEG], room, wall behind, floor, characters
 | `building_crate` | sturdy wooden storage crate with metal corner brackets and an X brace | 1:1 | 1024x1024 |
 | `building_bed` | simple bunker cot bed with a grey-green blanket and a pillow on the left, metal legs | 2:1 | 1536x768 |
 | `building_table` | sturdy wooden work table with metal legs, a few small tools on top | 2:1 | 1536x768 |
+| `building_farm_plot` | raised wooden planter bed with dark soil and rows of small green crop sprouts, a tiny grow lamp above | 2:1 | 1536x768 |
+| `building_kitchen` | compact bunker kitchen: steel stove with two glowing burners, a steaming pot, a small shelf with jars | 2:1 | 1536x768 |
 
 ---
 

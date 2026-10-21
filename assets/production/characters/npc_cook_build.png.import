@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://s38ec6ch6vs1"
+path="res://.godot/imported/npc_cook_build.png-52a5b915ee97a99ea1126684b1325927.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_cook_build.png"
+dest_files=["res://.godot/imported/npc_cook_build.png-52a5b915ee97a99ea1126684b1325927.image"]
+
+[params]
+

@@ -18,7 +18,7 @@ signal menu_requested
 ## Touch-friendly minimum size. PLACEHOLDER until UX prototype (spec §9).
 const BUTTON_MIN_SIZE := Vector2(56, 44)
 const PRIORITY_BUTTON_SIZE := Vector2(44, 44)
-const ICON_MAX_WIDTH := 24
+const ICON_MAX_WIDTH := 20  # 24 pushed the toolbar into the HUD column once the owner's icons arrived
 const ZOOM_STEP := 1.25
 ## [tool, label, tooltip, icon name (ASSET_SPEC §8)]
 const TOOLS := [

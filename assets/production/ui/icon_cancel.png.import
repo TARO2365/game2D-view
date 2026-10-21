@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://n6g1d7qg5o0a"
+path="res://.godot/imported/icon_cancel.png-c48e8d3d3f2f37cf69efa5f7ae96bbe6.image"
+
+[deps]
+
+source_file="res://assets/production/ui/icon_cancel.png"
+dest_files=["res://.godot/imported/icon_cancel.png-c48e8d3d3f2f37cf69efa5f7ae96bbe6.image"]
+
+[params]
+

@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://b8kc2cj2u1dck"
+path="res://.godot/imported/npc_cook_carry.png-b491d88dd35eb1e4fe6430ca03a0d8b2.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_cook_carry.png"
+dest_files=["res://.godot/imported/npc_cook_carry.png-b491d88dd35eb1e4fe6430ca03a0d8b2.image"]
+
+[params]
+

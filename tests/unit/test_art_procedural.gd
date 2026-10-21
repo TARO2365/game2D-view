@@ -84,6 +84,12 @@ func test_anim_for_states() -> void:
 	assert_eq(NpcView.anim_for(&"carrying", true, false, true), &"carry")
 	assert_eq(NpcView.anim_for(&"carrying", false, false, true), &"carry")
 	assert_eq(NpcView.anim_for(&"working", false, false, false), &"dig")
+	# M4a needs.
+	assert_eq(NpcView.anim_for(&"sleeping", false, false, false), &"sleep")
+	assert_eq(NpcView.anim_for(&"sleeping", true, false, false), &"walk", "walking to bed")
+	assert_eq(NpcView.anim_for(&"collapsed", false, false, false), &"sleep", "lies down")
+	assert_eq(NpcView.anim_for(&"eating", false, false, true), &"eat")
+	assert_eq(NpcView.anim_for(&"eating", true, false, true), &"carry", "carrying food to a table")
 
 
 func test_poses_cover_every_frame() -> void:
@@ -111,6 +117,22 @@ func test_rig_poses_move_parts_without_redraw_logic() -> void:
 	assert_true((parts[&"carry"] as Node2D).visible, "held item shown")
 	ProcFigure.apply_pose(parts, &"dig", 0, ProcFigure.NO_CARRY)
 	assert_true((parts[&"pickaxe"] as Node2D).visible, "pickaxe while digging")
+
+
+func test_pose_at_is_continuous() -> void:
+	# Keys at phase 0 and 0.25 of the 4-key walk; halfway is in between.
+	var a: float = ProcFigure.pose_at(&"walk", 0.0)[&"leg_f"]
+	var b: float = ProcFigure.pose_at(&"walk", 0.25)[&"leg_f"]
+	var mid: float = ProcFigure.pose_at(&"walk", 0.125)[&"leg_f"]
+	assert_almost_eq(a, float(ProcFigure.pose(&"walk", 0)[&"leg_f"]), 0.001)
+	assert_almost_eq(b, float(ProcFigure.pose(&"walk", 1)[&"leg_f"]), 0.001)
+	assert_between(mid, minf(a, b), maxf(a, b))
+	# Small phase steps give small pose changes (no snapping).
+	var prev: float = ProcFigure.pose_at(&"dig", 0.0)[&"arm_f"]
+	for i in range(1, 101):
+		var cur: float = ProcFigure.pose_at(&"dig", i / 100.0)[&"arm_f"]
+		assert_lt(absf(cur - prev), 0.15, "smooth at step %d" % i)
+		prev = cur
 
 
 func test_atlas_slots_fit_and_do_not_overlap() -> void:

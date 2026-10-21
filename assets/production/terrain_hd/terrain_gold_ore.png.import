@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://vkty42o0tk1n"
+path="res://.godot/imported/terrain_gold_ore.png-9e5b89eb6a8b98e6d5e88740626ab1a2.image"
+
+[deps]
+
+source_file="res://assets/production/terrain_hd/terrain_gold_ore.png"
+dest_files=["res://.godot/imported/terrain_gold_ore.png-9e5b89eb6a8b98e6d5e88740626ab1a2.image"]
+
+[params]
+

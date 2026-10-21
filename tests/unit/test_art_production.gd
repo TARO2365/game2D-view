@@ -38,13 +38,15 @@ func test_character_sheets() -> void:
 		assert_not_null(sheet, f)
 		if sheet:
 			n += 1
-			assert_eq(sheet.get_height(), ArtLibrary.NPC_CELL.y, f)
-			assert_eq(sheet.get_width() % ArtLibrary.NPC_CELL.x, 0, f)
-			var img := ArtLibrary.image(ArtLibrary.npc_sheet_path(StringName(parts[1]), StringName(parts[2])))
-			for i in ArtLibrary.frame_count(sheet):
-				var used := img.get_region(Rect2i(i * ArtLibrary.NPC_CELL.x, 0, ArtLibrary.NPC_CELL.x, ArtLibrary.NPC_CELL.y)).get_used_rect()
-				assert_gt(used.size.y, 100, "%s frame %d has a figure" % [f, i])
-				assert_gte(used.end.y, ArtLibrary.NPC_CELL.y - 2, "%s frame %d feet on the bottom edge" % [f, i])
+			var anim := StringName(parts[2])
+			var cell := ArtLibrary.cell_size(anim)
+			assert_eq(sheet.get_height(), cell.y, f)
+			assert_eq(sheet.get_width() % cell.x, 0, f)
+			var img := ArtLibrary.image(ArtLibrary.npc_sheet_path(StringName(parts[1]), anim))
+			for i in ArtLibrary.frame_count(sheet, anim):
+				var used := img.get_region(Rect2i(i * cell.x, 0, cell.x, cell.y)).get_used_rect()
+				assert_gt(used.size.y, 60 if anim == &"sleep" else 100, "%s frame %d has a figure" % [f, i])
+				assert_gte(used.end.y, cell.y - 2, "%s frame %d rests on the bottom edge" % [f, i])
 	gut.p("character sheets checked: %d" % n)
 
 

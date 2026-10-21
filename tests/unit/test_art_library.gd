@@ -70,7 +70,7 @@ func test_npc_sheet_frames() -> void:
 	assert_eq(ArtLibrary.frame_region(7, 6), Rect2(128, 0, 128, 192), "frames wrap")
 
 
-func test_missing_anims_fall_back_to_walk() -> void:
+func test_missing_anims_use_rig_except_idle() -> void:
 	var walk := Image.create(128 * 4, 192, false, Image.FORMAT_RGBA8)
 	for f in 4:  # frame 2 is the narrowest (standing)
 		var half := 10 if f == 2 else 40
@@ -80,11 +80,21 @@ func test_missing_anims_fall_back_to_walk() -> void:
 	assert_eq(idle.anim, &"walk")
 	assert_true(idle.hold, "idle shows one still frame")
 	assert_eq(idle.frame, 2, "the standing (narrowest) frame")
-	var carry := ArtLibrary.npc_anim_sheet(&"miner", &"carry")
-	assert_eq(carry.anim, &"walk")
-	assert_false(carry.hold, "carry borrows the animated walk")
-	assert_eq(ArtLibrary.npc_anim_sheet(&"miner", &"build").anim, &"walk")
+	for anim in [&"carry", &"climb", &"build", &"sleep", &"fall"]:
+		assert_eq(ArtLibrary.npc_anim_sheet(&"miner", anim), {}, "%s -> code rig (D-027)" % anim)
 	assert_eq(ArtLibrary.npc_anim_sheet(&"cook", &"idle"), {}, "no sheets -> procedural rig")
+
+
+func test_sheet_metrics() -> void:
+	var walk := Image.create(128 * 2, 192, false, Image.FORMAT_RGBA8)
+	walk.fill_rect(Rect2i(40, 20, 48, 172), Color.RED)          # frame 0: head centre 64
+	walk.fill_rect(Rect2i(128 + 46, 20, 48, 172), Color.RED)    # frame 1: shifted 6 px
+	walk.save_png(TEST_DIR + "characters/npc_miner_walk.png")
+	var m := ArtLibrary.sheet_metrics(&"miner", &"walk")
+	assert_between(float(m.cycle_px), 40.0, 160.0)
+	var dx: PackedFloat32Array = m.dx
+	assert_eq(dx.size(), 2)
+	assert_almost_eq(dx[1] - dx[0], -4.0, 0.01, "wobble offset clamped to 4 px")
 
 
 func test_own_sheet_wins_over_fallback() -> void:
