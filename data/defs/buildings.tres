@@ -3,7 +3,7 @@
 [ext_resource type="Script" path="res://src/world/building_registry.gd" id="1_reg"]
 [ext_resource type="Script" path="res://src/world/building_def.gd" id="2_def"]
 
-; All kg / work_ticks / storage_kg values are PLACEHOLDER (M3 contract §2, D-021).
+; All kg / work_ticks / storage_kg values are PLACEHOLDER (M3 contract §2, M4a §6, D-021, D-028).
 ; Keys are saved: never rename.
 
 [sub_resource type="Resource" id="Bld_door"]
@@ -51,6 +51,29 @@ work_ticks = 30
 needs_floor = true
 room_tag = &"dining"
 
+[sub_resource type="Resource" id="Bld_farm_plot"]
+script = ExtResource("2_def")
+key = &"farm_plot"
+display_name = "Farm Plot"
+size = Vector2i(2, 1)
+materials = Array[StringName]([&"dirt"])
+kg = 50.0
+work_ticks = 20
+needs_floor = true
+floor_materials = Array[StringName]([&"dirt", &"rock"])
+room_tag = &"farm"
+
+[sub_resource type="Resource" id="Bld_kitchen"]
+script = ExtResource("2_def")
+key = &"kitchen"
+display_name = "Kitchen"
+size = Vector2i(2, 1)
+materials = Array[StringName]([&"rock"])
+kg = 100.0
+work_ticks = 40
+needs_floor = true
+room_tag = &"kitchen"
+
 [resource]
 script = ExtResource("1_reg")
-defs = Array[Resource]([SubResource("Bld_door"), SubResource("Bld_crate"), SubResource("Bld_bed"), SubResource("Bld_table")])
+defs = Array[Resource]([SubResource("Bld_door"), SubResource("Bld_crate"), SubResource("Bld_bed"), SubResource("Bld_table"), SubResource("Bld_farm_plot"), SubResource("Bld_kitchen")])

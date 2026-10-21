@@ -57,7 +57,31 @@ func test_defs_match_contract() -> void:
 		assert_eq(d.work_ticks, 30)
 		assert_false(d.is_door)
 	assert_null(b.def(&"nope"))
-	assert_eq(b.registry.all_defs().size(), 4)
+	assert_eq(b.registry.all_defs().size(), 6)
+	for d in [door, crate, bed, table]:
+		assert_true(d.floor_materials.is_empty(), "%s: any solid floor" % d.key)
+
+
+func test_m4a_defs_match_contract() -> void:
+	var farm := b.def(&"farm_plot")
+	assert_eq(farm.size, Vector2i(2, 1))
+	assert_eq(farm.materials, [&"dirt"] as Array[StringName])
+	assert_almost_eq(farm.kg, 50.0, 0.001)
+	assert_eq(farm.work_ticks, 20)
+	assert_true(farm.needs_floor)
+	assert_eq(farm.floor_materials, [&"dirt", &"rock"] as Array[StringName])
+	assert_eq(farm.room_tag, &"farm")
+	assert_false(farm.is_door)
+	assert_almost_eq(farm.storage_kg, 0.0, 0.001)
+	var kitchen := b.def(&"kitchen")
+	assert_eq(kitchen.size, Vector2i(2, 1))
+	assert_eq(kitchen.materials, [&"rock"] as Array[StringName])
+	assert_almost_eq(kitchen.kg, 100.0, 0.001)
+	assert_eq(kitchen.work_ticks, 40)
+	assert_true(kitchen.needs_floor)
+	assert_true(kitchen.floor_materials.is_empty())
+	assert_eq(kitchen.room_tag, &"kitchen")
+	assert_false(kitchen.is_door)
 
 
 func test_footprint_grows_up_from_bottom_left() -> void:
@@ -264,3 +288,111 @@ func test_snapshot_junk_is_dropped() -> void:
 	assert_eq(b.get_building("bld:9")["materials"], {})
 	assert_eq(b.load_snapshot({"buildings": "nope"}), 0)
 	assert_eq(b.count(), 0)
+
+
+# --- M4a: farm plot, kitchen -------------------------------------------
+
+func _set_tile(p: Vector2i, id: int) -> void:
+	g.tiles[p.y * g.width + p.x] = id  # test fixture only (no signal)
+
+
+func test_farm_plot_needs_soil_floor() -> void:
+	assert_true(b.can_place(&"farm_plot", Vector2i(11, 22)).ok, "dirt floor")
+	_set_tile(Vector2i(19, 23), TileRegistry.ROCK)
+	_set_tile(Vector2i(20, 23), TileRegistry.ROCK)
+	assert_true(b.can_place(&"farm_plot", Vector2i(19, 22)).ok, "rock floor")
+	assert_true(b.can_place(&"farm_plot", Vector2i(18, 22)).ok, "dirt + rock floor")
+	# Concrete floor.
+	g.apply_edit(Rect2i(13, 23, 2, 1), WorldGrid.Edit.DIG)
+	g.apply_edit(Rect2i(13, 23, 2, 1), WorldGrid.Edit.BUILD_WALL)
+	var r := b.can_place(&"farm_plot", Vector2i(13, 22))
+	assert_eq(r.code, &"needs_soil", str(r))
+	assert_eq(b.can_place(&"farm_plot", Vector2i(12, 22)).code, &"needs_soil", "half on concrete")
+	# Ore (and bedrock) floors do not count.
+	for ore in [TileRegistry.IRON_ORE, TileRegistry.GOLD_ORE, TileRegistry.CRYSTAL, TileRegistry.BEDROCK]:
+		_set_tile(Vector2i(16, 23), ore)
+		assert_eq(b.can_place(&"farm_plot", Vector2i(16, 22)).code, &"needs_soil", "floor tile %d" % ore)
+	# Missing floor wins over soil.
+	g.apply_edit(Rect2i(17, 23, 1, 1), WorldGrid.Edit.DIG)
+	assert_eq(b.can_place(&"farm_plot", Vector2i(16, 22)).code, &"no_floor")
+	# The usual rules still apply.
+	assert_eq(b.can_place(&"farm_plot", Vector2i(20, 22)).code, &"blocked")
+	assert_eq(b.can_place(&"farm_plot", Vector2i(63, 9)).code, &"out_of_bounds")
+	assert_eq(b.can_place(&"farm_plot", Vector2i(11, 21)).code, &"no_floor")
+	assert_true(b.can_place(&"farm_plot", Vector2i(5, 9)).ok, "surface dirt")
+
+
+func test_farm_plot_place_and_materials() -> void:
+	assert_eq(b.place(&"farm_plot", Vector2i(11, 22), {&"rock": 50.0}).code, &"invalid_materials")
+	var id := _place(&"farm_plot", Vector2i(11, 22), {&"dirt": 50.0})
+	assert_eq(b.room_tag_at(Vector2i(12, 22)), &"farm")
+	assert_false(b.is_door(Vector2i(11, 22)))
+	assert_true(g.is_passable(Vector2i(11, 22)))
+	assert_eq(b.can_place(&"kitchen", Vector2i(12, 22)).code, &"blocked")
+	var r := b.remove(id)
+	assert_eq(r.data["materials"], {&"dirt": 50.0})
+
+
+func test_kitchen_placement() -> void:
+	assert_true(b.can_place(&"kitchen", Vector2i(11, 22)).ok)
+	g.apply_edit(Rect2i(13, 23, 2, 1), WorldGrid.Edit.DIG)
+	g.apply_edit(Rect2i(13, 23, 2, 1), WorldGrid.Edit.BUILD_WALL)
+	assert_true(b.can_place(&"kitchen", Vector2i(13, 22)).ok, "any solid floor, concrete too")
+	_set_tile(Vector2i(16, 23), TileRegistry.IRON_ORE)
+	assert_true(b.can_place(&"kitchen", Vector2i(15, 22)).ok, "ore floor too")
+	g.apply_edit(Rect2i(18, 23, 1, 1), WorldGrid.Edit.DIG)
+	assert_eq(b.can_place(&"kitchen", Vector2i(17, 22)).code, &"no_floor")
+	assert_eq(b.can_place(&"kitchen", Vector2i(20, 22)).code, &"blocked")
+	assert_eq(b.can_place(&"kitchen", Vector2i(5, 5)).code, &"no_floor")
+	assert_eq(b.place(&"kitchen", Vector2i(11, 22), {&"dirt": 100.0}).code, &"invalid_materials")
+	var id := _place(&"kitchen", Vector2i(13, 22), {&"rock": 100.0})
+	assert_eq(b.room_tag_at(Vector2i(14, 22)), &"kitchen")
+	assert_eq(b.get_building(id)["materials"], {&"rock": 100.0})
+
+
+func test_farm_plot_loses_floor() -> void:
+	var farm := _place(&"farm_plot", Vector2i(11, 22), {&"dirt": 50.0})
+	watch_signals(b)
+	g.apply_edit(Rect2i(14, 23, 1, 1), WorldGrid.Edit.DIG)
+	assert_signal_not_emitted(b, "building_lost", "floor next to the plot")
+	g.apply_edit(Rect2i(12, 23, 1, 1), WorldGrid.Edit.DIG)
+	assert_signal_emit_count(b, "building_lost", 1)
+	assert_signal_emitted_with_parameters(b, "building_lost",
+			[farm, &"farm_plot", Vector2i(11, 22), {&"dirt": 50.0}])
+	assert_eq(b.building_at(Vector2i(11, 22)), "")
+	# Refilling the hole with concrete does not make it farmable again.
+	g.apply_edit(Rect2i(12, 23, 1, 1), WorldGrid.Edit.BUILD_WALL)
+	assert_eq(b.can_place(&"farm_plot", Vector2i(11, 22)).code, &"needs_soil")
+
+
+func test_kitchen_loses_floor() -> void:
+	g.apply_edit(Rect2i(13, 23, 2, 1), WorldGrid.Edit.DIG)
+	g.apply_edit(Rect2i(13, 23, 2, 1), WorldGrid.Edit.BUILD_WALL)
+	var kitchen := _place(&"kitchen", Vector2i(13, 22), {&"rock": 100.0})
+	watch_signals(b)
+	g.apply_edit(Rect2i(14, 23, 1, 1), WorldGrid.Edit.DECONSTRUCT_WALL)
+	assert_signal_emitted_with_parameters(b, "building_lost",
+			[kitchen, &"kitchen", Vector2i(13, 22), {&"rock": 100.0}])
+	assert_eq(b.count(), 0)
+
+
+func test_m4a_snapshot_round_trip() -> void:
+	g.apply_edit(Rect2i(15, 23, 2, 1), WorldGrid.Edit.DIG)
+	g.apply_edit(Rect2i(15, 23, 2, 1), WorldGrid.Edit.BUILD_WALL)
+	var farm := _place(&"farm_plot", Vector2i(11, 22), {&"dirt": 50.0})
+	var kitchen := _place(&"kitchen", Vector2i(15, 22), {&"rock": 100.0})
+	var snap: Variant = bytes_to_var(var_to_bytes(b.to_snapshot()))
+	var other := Buildings.new(g, StableIdAllocator.new())
+	assert_eq(other.load_snapshot(snap), 0)
+	assert_eq(other.all_ids(), [farm, kitchen] as Array[String])
+	assert_eq(other.get_building(farm), b.get_building(farm))
+	assert_eq(other.get_building(kitchen), b.get_building(kitchen))
+	assert_eq(var_to_str(other.to_snapshot()), var_to_str(b.to_snapshot()))
+	# A farm plot saved on a floor that is no longer soil is dropped on load.
+	var junk := {"buildings": [
+		{"id": "bld:1", "key": "farm_plot", "x": 15, "y": 22, "materials": {"dirt": 50.0}},
+		{"id": "bld:2", "key": "kitchen", "x": 15, "y": 22, "materials": {"rock": 100.0, "dirt": 1.0}},
+	]}
+	assert_eq(other.load_snapshot(junk), 1)
+	assert_eq(other.all_ids(), ["bld:2"] as Array[String])
+	assert_eq(other.get_building("bld:2")["materials"], {&"rock": 100.0})
