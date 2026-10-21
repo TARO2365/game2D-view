@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://cnoxmdibpjvjs"
+path="res://.godot/imported/npc_miner_climb.png-bfaffbd84bbd7b653a3af99e8c556ca4.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_miner_climb.png"
+dest_files=["res://.godot/imported/npc_miner_climb.png-bfaffbd84bbd7b653a3af99e8c556ca4.image"]
+
+[params]
+

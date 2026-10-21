@@ -18,9 +18,13 @@ shader_type canvas_item;
 uniform float tile_px = 64.0;
 uniform int variants = 4;
 varying vec2 world_pos;
+varying vec4 modulate;
 
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy;
+	// In fragment() COLOR already includes the row-0 texel; keep only the
+	// vertex modulate here so the variant texel is not multiplied twice.
+	modulate = COLOR;
 }
 
 void fragment() {
@@ -32,7 +36,7 @@ void fragment() {
 	h = h ^ (h >> 16u);
 	float v = float(h % uint(variants));
 	vec2 uv = UV + vec2(0.0, v * tile_px * TEXTURE_PIXEL_SIZE.y);
-	COLOR = texture(TEXTURE, uv) * COLOR;
+	COLOR = texture(TEXTURE, uv) * modulate;
 }
 """
 

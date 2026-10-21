@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://dd2yiy3i4c5wb"
+path="res://.godot/imported/terrain_dirt.png-ce393d8aac92a5ef949efea6cd76a233.image"
+
+[deps]
+
+source_file="res://assets/production/terrain/terrain_dirt.png"
+dest_files=["res://.godot/imported/terrain_dirt.png-ce393d8aac92a5ef949efea6cd76a233.image"]
+
+[params]
+

@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://vcmmgt606tp6"
+path="res://.godot/imported/npc_scientist_walk.png-1a0469e368a73044362efb5064ebff07.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_scientist_walk.png"
+dest_files=["res://.godot/imported/npc_scientist_walk.png-1a0469e368a73044362efb5064ebff07.image"]
+
+[params]
+

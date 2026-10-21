@@ -109,7 +109,7 @@ func _ready() -> void:
 ## polygon as its own draw call, textured rects batch. Skipped headless
 ## (tests), where the vector parts are kept.
 func _bake_rig() -> void:
-	if DisplayServer.get_name() == "headless":
+	if DisplayServer.get_name() == "headless" or uses_sheets():
 		return
 	_bake_vp = SubViewport.new()
 	_bake_vp.name = "RigBake"
@@ -205,23 +205,37 @@ func current_frame() -> int:
 	return _frame
 
 
-## Production sheet for an animation of this NPC's role, or null (cached).
+## Production sheet for an animation of this NPC's role (own sheet or the
+## ArtLibrary fallback, e.g. idle -> a still walk frame), or null when the
+## role has no sheets at all (procedural rig). Cached per view.
 func _sheet(anim: StringName) -> Texture2D:
+	return _sheet_info(anim).get("sheet")
+
+
+func _sheet_info(anim: StringName) -> Dictionary:
 	if not _sheets.has(anim):
-		_sheets[anim] = ArtLibrary.npc_sheet(role(), anim)
+		_sheets[anim] = ArtLibrary.npc_anim_sheet(role(), anim)
 	return _sheets[anim]
 
 
+## True when this NPC is drawn from production sheets.
+func uses_sheets() -> bool:
+	return _sheet(&"walk") != null
+
+
 func _frame_for(anim: StringName) -> int:
-	var sheet := _sheet(anim)
+	var info := _sheet_info(anim)
+	var sheet: Texture2D = info.get("sheet")
+	if sheet and info.hold:
+		return info.frame
 	var count: int = ArtLibrary.frame_count(sheet) if sheet else ProcFigure.FRAMES.get(anim, 1)
 	match anim:
 		&"walk", &"carry", &"climb":
 			return floori(_walk_dist / (tile_px * STRIDE_TILES / count)) % count
 		&"dig", &"build":
-			return floori(_work_time * ArtLibrary.ANIM_FPS.get(anim, 8.0)) % count
+			return floori(_work_time * ArtLibrary.ANIM_FPS.get(info.get("anim", anim), 8.0)) % count
 	if sheet:
-		return floori(_idle_time * ArtLibrary.ANIM_FPS.get(anim, 4.0)) % count
+		return floori(_idle_time * ArtLibrary.ANIM_FPS.get(info.anim, 4.0)) % count
 	# Procedural idle: gentle breathing bob, blink once per period.
 	if fposmod(_idle_time, IDLE_BLINK_PERIOD) > IDLE_BLINK_PERIOD - 0.15:
 		return 2
@@ -238,8 +252,8 @@ func _draw() -> void:
 	var cell := Vector2(ArtLibrary.NPC_CELL)
 	draw_texture_rect_region(sheet, Rect2(Vector2(-cell.x / 2.0, -cell.y), cell),
 			ArtLibrary.frame_region(_frame, ArtLibrary.frame_count(sheet)))
-	if _carry_color.a > 0.0:
-		ProcFigure.draw_chunk(self, ProcFigure.CARRY_AT, 13.0, _carry_color, 7)
+	if _carry_color.a > 0.0 and _anim == &"carry":
+		ProcFigure.draw_chunk(self, ArtLibrary.SHEET_CARRY_AT, 14.0, _carry_color, 7)
 	draw_set_transform(Vector2.ZERO)
 
 

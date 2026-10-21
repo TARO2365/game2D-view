@@ -10,7 +10,17 @@ static var base_dir := "res://assets/production/"
 
 ## Fixed sprite-sheet cell sizes (ASSET_SPEC §4, §6). Cells have no padding.
 const TILE_PX := 64
-const NPC_CELL := Vector2i(96, 192)
+const NPC_CELL := Vector2i(128, 192)
+## Where the hands hold a carried item in a sheet cell (feet pivot space).
+const SHEET_CARRY_AT := Vector2(22, -80)
+## Missing animation -> sheets to try instead, in order (ASSET_SPEC §6).
+const NPC_FALLBACK := {
+	&"idle": [&"walk"], &"walk": [], &"carry": [&"walk"], &"climb": [&"walk"],
+	&"dig": [&"build", &"walk"], &"build": [&"dig", &"walk"],
+	&"sleep": [&"idle", &"walk"], &"fall": [&"idle", &"walk"],
+}
+## Animations that, when borrowed from a moving sheet, show one still frame.
+const HOLD_ANIMS: Array[StringName] = [&"idle", &"sleep", &"fall"]
 const TERRAIN_VARIANTS := 4
 
 ## Animation frame rates (frames per second) used for production sheets.
@@ -22,35 +32,45 @@ const ANIM_FPS := {
 static var _cache: Dictionary = {}  # path -> Texture2D or null
 
 
-## Texture at `rel` under base_dir, or null. Loads imported resources first
-## (exported builds), then raw PNGs (files dropped in before re-import).
+## Texture at `rel` under base_dir, or null (cached, misses included).
 static func texture(rel: String) -> Texture2D:
 	var path := base_dir.path_join(rel)
 	if _cache.has(path):
 		return _cache[path]
 	var tex: Texture2D = null
-	if ResourceLoader.exists(path):
+	var img := image(rel)
+	if img != null:
+		tex = ImageTexture.create_from_image(img)
+	elif ResourceLoader.exists(path):
 		tex = load(path) as Texture2D
-	elif FileAccess.file_exists(path):
-		var img := Image.load_from_file(path)
-		if img != null and not img.is_empty():
-			tex = ImageTexture.create_from_image(img)
 	_cache[path] = tex
 	return tex
 
 
-## Same lookup as texture() but returns the RGBA8 image (for atlas building).
+## RGBA8 image at `rel`, or null. Production PNGs are imported as Image
+## resources (ASSET_SPEC §9): the pixels stay on the CPU, because reading a
+## GPU texture back (Texture2D.get_image) returns garbage in the Web build.
+## Falls back to a raw PNG (file dropped in before re-import). A copy is
+## returned, so callers may modify it.
 static func image(rel: String) -> Image:
-	var tex := texture(rel)
-	if tex == null:
-		return null
-	var img := tex.get_image()
-	if img == null or img.is_empty():
-		return null
-	if img.is_compressed():
-		img.decompress()
-	img.convert(Image.FORMAT_RGBA8)
-	return img
+	var path := base_dir.path_join(rel)
+	var key := "img|" + path
+	if not _cache.has(key):
+		var img: Image = null
+		if ResourceLoader.exists(path, "Image"):
+			img = load(path) as Image
+		if img == null and FileAccess.file_exists(path) and not ResourceLoader.exists(path):
+			img = Image.load_from_file(path)
+		if img != null and not img.is_empty():
+			img = img.duplicate() as Image
+			if img.is_compressed():
+				img.decompress()
+			img.convert(Image.FORMAT_RGBA8)
+		else:
+			img = null
+		_cache[key] = img
+	var cached: Image = _cache[key]
+	return cached.duplicate() as Image if cached else null
 
 
 static func clear_cache() -> void:
@@ -120,6 +140,45 @@ static func npc_sheet(role: StringName, anim: StringName) -> Texture2D:
 	if tex == null or tex.get_height() < NPC_CELL.y or tex.get_width() < NPC_CELL.x:
 		return null
 	return tex
+
+
+## Sheet to show for (role, anim): the anim's own sheet, else the first
+## available fallback in NPC_FALLBACK. Returns {} when the role has none of
+## them (caller uses the procedural rig). Keys: sheet, anim (sheet's anim),
+## hold (true = show one standing frame instead of animating), frame (that
+## standing frame). Cached.
+static func npc_anim_sheet(role: StringName, anim: StringName) -> Dictionary:
+	var ck := "anim|%s|%s|%s" % [base_dir, role, anim]
+	if _cache.has(ck):
+		return _cache[ck]
+	var res := {}
+	var tex := npc_sheet(role, anim)
+	if tex != null:
+		res = {"sheet": tex, "anim": anim, "hold": false, "frame": 0}
+	else:
+		for alt: StringName in NPC_FALLBACK.get(anim, [&"walk"]):
+			tex = npc_sheet(role, alt)
+			if tex != null:
+				var hold: bool = anim in HOLD_ANIMS and not (alt in HOLD_ANIMS)
+				res = {"sheet": tex, "anim": alt, "hold": hold,
+						"frame": stand_frame(image(npc_sheet_path(role, alt))) if hold else 0}
+				break
+	_cache[ck] = res
+	return res
+
+
+## Index of the narrowest frame of a sheet (legs together = a standing pose).
+static func stand_frame(img: Image) -> int:
+	if img == null or img.is_empty():
+		return 0
+	var best := 0
+	var best_w := INF
+	for f in maxi(1, img.get_width() / NPC_CELL.x):
+		var used := img.get_region(Rect2i(f * NPC_CELL.x, 0, NPC_CELL.x, NPC_CELL.y)).get_used_rect()
+		if used.size.x > 0 and used.size.x < best_w:
+			best_w = used.size.x
+			best = f
+	return best
 
 
 ## Number of frames in a sheet (cells are NPC_CELL, one row).

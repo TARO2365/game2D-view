@@ -73,11 +73,13 @@ Do the same for the other three roles by replacing the outfit sentence with the 
 
 Template (replace `<MATERIAL TEXT>`):
 ```text
-Single square game terrain tile, seamless tileable texture, side-view cross-section of underground ground,
-[STYLE], <MATERIAL TEXT>, fills the whole square edge to edge, subtle slightly darker rim (chunky block look),
-no large objects touching the edges, lighting from the top-left, opaque, no background.
-Square 1:1, 1024x1024 (will be scaled to 64x64, so keep details big and readable).
-Negative: [NEG], objects, characters, plants on top
+Single square game terrain tile, seamless tileable texture that repeats perfectly left-right and top-bottom,
+side-view cross-section of underground ground, [STYLE], <MATERIAL TEXT>, fills the whole square edge to edge,
+larger simple shapes that stay readable when shrunk to 64x64 pixels (about 6-12 main shapes, not hundreds of tiny
+ones), even brightness across the whole tile, no rim or vignette, no large objects touching the edges,
+lighting from the top-left, opaque, no background.
+Square 1:1, 1024x1024.
+Negative: [NEG], objects, characters, plants on top, vignette, darker corners, visible seams, noisy micro detail
 ```
 
 | File you send | `<MATERIAL TEXT>` |
@@ -143,9 +145,13 @@ right-facing 3/4 side view, orthographic.
 Frames are equal-width cells of exactly the same size placed edge to edge with no gaps; each cell is twice as tall
 as it is wide (1:2); the character is centred in each cell, the same size in every frame, about 83% of the cell
 height, feet touching the bottom edge of the cell, empty space above the head for the hat.
-Animation: <ACTION TEXT>. Smooth loop, consistent outfit and colours in every frame.
+Animation: <ACTION TEXT>. Smooth loop, consistent outfit and colours in every frame. The character is exactly
+the same size as in the reference sheet and the head is the same size and height in every frame. Tools stay fully
+inside their own cell with a clear margin. No loose particles, dust, sparks or debris floating around the
+character. Clean edges, no coloured halo.
 Transparent background (or flat pure green #00FF00). Whole image aspect ratio <N>:2, at least <N*256>x512.
-Negative: [NEG], background scenery, floor line, numbers under frames
+Negative: [NEG], background scenery, floor line, numbers under frames, dust particles, flying debris, specks,
+tool crossing into the next frame, red or dark fringe around the outline
 ```
 
 | Send as | `<N>` | `<ACTION TEXT>` |
@@ -196,8 +202,8 @@ Negative: [NEG], room, wall behind, floor, characters
 
 ---
 
-## 7. Toolbar icons (8)
-> **หมายเหตุ:** ไอคอนปุ่มเครื่องมือ 8 อัน ทำทีละอัน ใช้ prompt เดียวกัน เปลี่ยนรูปสัญลักษณ์ ต้องอ่านออกเมื่อย่อเหลือ 24 พิกเซล
+## 7. Toolbar icons (11)
+> **หมายเหตุ:** ไอคอนปุ่มเครื่องมือ 11 อัน (เพิ่ม build_menu, deconstruct, rooms สำหรับ M3) ทำทีละอัน ใช้ prompt เดียวกัน เปลี่ยนรูปสัญลักษณ์ ต้องอ่านออกเมื่อย่อเหลือ 24 พิกเซล
 ```text
 Single game UI icon, flat simple glyph of <ICON TEXT>, cream color (#f2e6d0) with a thick dark outline (#1e1712),
 very bold readable silhouette, centred, no background shape, transparent background (or flat pure green #00FF00).
@@ -214,6 +220,12 @@ Negative: [NEG], gradient, 3D, multiple objects, tiny details
 | `icon_clear_stockpile` | three stacked boxes with a diagonal cross line |
 | `icon_priority` | an exclamation mark inside a circle |
 | `icon_cancel` | a bold X inside a circle |
+| `icon_build_menu` | a small house outline with a plus sign |
+| `icon_deconstruct` | a crowbar crossing a broken brick |
+| `icon_rooms` | a floor plan of two rooms side by side with a door gap |
+
+Toolbar order (11 buttons): select, dig, build (wall), ladder, build_menu, deconstruct, stockpile, clear_stockpile,
+priority, cancel, rooms.
 
 ---
 
@@ -232,6 +244,8 @@ Negative: [NEG], gradient, 3D, multiple objects, tiny details
 ---
 
 ## 9. Run these first (smallest set that changes the most on screen)
+> **อัปเดต 2026-10-21:** ชุดแรก (batch 1) ได้รับและนำเข้าเกมแล้ว รายการที่ยังขาดและลำดับที่ควรทำต่อ อยู่ใน
+> `docs/art/MISSING_V1.md`
 > **หมายเหตุ:** ถ้ามีเวลาน้อย ให้ทำ 6 ข้อนี้ก่อน เห็นผลในเกมมากที่สุด
 1. **§1.3 master reference: miner** (pick the best, note the seed).
 2. **§2 `terrain_dirt` × 4** and **`terrain_rock` × 4** (most of the visible world).
