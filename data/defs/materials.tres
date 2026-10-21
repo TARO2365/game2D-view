@@ -1,0 +1,76 @@
+[gd_resource type="Resource" script_class="MaterialDefs" format=3]
+
+[ext_resource type="Script" path="res://src/inventory/material_defs.gd" id="1_reg"]
+[ext_resource type="Script" path="res://src/inventory/material_def.gd" id="2_def"]
+
+; M4a contract §4. Colours and nutrition values are PLACEHOLDER.
+; Keys are saved in item snapshots: never rename. Tile materials use the
+; TileDef key and placeholder colour of the tile they drop from.
+
+[sub_resource type="Resource" id="Mat_dirt"]
+script = ExtResource("2_def")
+key = &"dirt"
+display_name = "Dirt"
+color = Color(0.45, 0.31, 0.2, 1)
+category = &"soil"
+nutrition_per_kg = 0.0
+
+[sub_resource type="Resource" id="Mat_rock"]
+script = ExtResource("2_def")
+key = &"rock"
+display_name = "Rock"
+color = Color(0.37, 0.36, 0.35, 1)
+category = &"soil"
+nutrition_per_kg = 0.0
+
+[sub_resource type="Resource" id="Mat_iron_ore"]
+script = ExtResource("2_def")
+key = &"iron_ore"
+display_name = "Iron Ore"
+color = Color(0.36, 0.42, 0.55, 1)
+category = &"ore"
+nutrition_per_kg = 0.0
+
+[sub_resource type="Resource" id="Mat_gold_ore"]
+script = ExtResource("2_def")
+key = &"gold_ore"
+display_name = "Gold Ore"
+color = Color(0.78, 0.6, 0.18, 1)
+category = &"ore"
+nutrition_per_kg = 0.0
+
+[sub_resource type="Resource" id="Mat_crystal"]
+script = ExtResource("2_def")
+key = &"crystal"
+display_name = "Crystal"
+color = Color(0.58, 0.33, 0.8, 1)
+category = &"ore"
+nutrition_per_kg = 0.0
+
+[sub_resource type="Resource" id="Mat_mushroom"]
+script = ExtResource("2_def")
+key = &"mushroom"
+display_name = "Cave Mushroom"
+color = Color(0.82, 0.74, 0.58, 1)
+category = &"food"
+nutrition_per_kg = 25.0
+
+[sub_resource type="Resource" id="Mat_meal"]
+script = ExtResource("2_def")
+key = &"meal"
+display_name = "Meal"
+color = Color(0.86, 0.45, 0.22, 1)
+category = &"food"
+nutrition_per_kg = 60.0
+
+[sub_resource type="Resource" id="Mat_ration"]
+script = ExtResource("2_def")
+key = &"ration"
+display_name = "Ration"
+color = Color(0.55, 0.62, 0.3, 1)
+category = &"food"
+nutrition_per_kg = 50.0
+
+[resource]
+script = ExtResource("1_reg")
+defs = Array[Resource]([SubResource("Mat_dirt"), SubResource("Mat_rock"), SubResource("Mat_iron_ore"), SubResource("Mat_gold_ore"), SubResource("Mat_crystal"), SubResource("Mat_mushroom"), SubResource("Mat_meal"), SubResource("Mat_ration")])

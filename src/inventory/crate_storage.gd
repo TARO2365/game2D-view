@@ -25,6 +25,9 @@ extends RefCounted
 signal crates_changed(building_id: String)
 
 var inventory: Inventory
+## Optional (M4a): when set, filters accept only keys known to MaterialDefs
+## (any category, food included); when null any non-empty key is accepted.
+var material_defs: MaterialDefs
 
 var _buildings: RefCounted        # Buildings provider (see NOTE above)
 var _known: Dictionary = {}       # crate building id -> true (last seen set)
@@ -42,9 +45,10 @@ var _seen_count: int = -1
 var _has_count: bool = false
 
 
-func _init(buildings: RefCounted, inv: Inventory) -> void:
+func _init(buildings: RefCounted, inv: Inventory, mat_defs: MaterialDefs = null) -> void:
 	_buildings = buildings
 	inventory = inv
+	material_defs = mat_defs
 	_has_count = _buildings.has_method(&"count")
 	_buildings.connect(&"buildings_changed", _on_buildings_changed)
 	_buildings.connect(&"building_lost", _on_building_lost)
@@ -147,6 +151,8 @@ func set_filter(building_id: String, materials: Array[StringName]) -> CommandRes
 	for m in materials:
 		if String(m).is_empty():
 			return CommandResult.failure(&"invalid_material", "Filter contains an empty material")
+		if material_defs != null and not material_defs.has(m):
+			return CommandResult.failure(&"unknown_material", "Unknown material '%s'" % m)
 		if not clean.has(m):
 			clean.append(m)
 	clean.sort_custom(_less_name)
@@ -255,7 +261,8 @@ func _load_filter(e: Variant) -> int:
 	var junk := 0
 	var clean: Array[StringName] = []
 	for m: Variant in mats_v:
-		if (typeof(m) != TYPE_STRING and typeof(m) != TYPE_STRING_NAME) or String(m).is_empty():
+		if (typeof(m) != TYPE_STRING and typeof(m) != TYPE_STRING_NAME) or String(m).is_empty() \
+				or (material_defs != null and not material_defs.has(StringName(m))):
 			junk += 1
 			continue
 		if not clean.has(StringName(m)):
