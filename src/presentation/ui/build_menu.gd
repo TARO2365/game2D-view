@@ -74,6 +74,11 @@ static func entry_text(d: BuildingDef, reg: TileRegistry) -> String:
 	var extra := ""
 	if d.storage_kg > 0.0:
 		extra = " · holds %.0f kg" % d.storage_kg
+	if not d.floor_materials.is_empty():
+		var floors: Array[String] = []
+		for m in d.floor_materials:
+			floors.append(material_name(reg, m))
+		extra += "\nneeds a %s floor" % " or ".join(floors)
 	return "%s  %d×%d\n%s · %.0f kg%s" % [d.display_name, d.size.x, d.size.y, " or ".join(mats), d.kg, extra]
 
 

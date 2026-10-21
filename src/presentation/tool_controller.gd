@@ -17,6 +17,7 @@ enum Tool { SELECT, DIG, BUILD, CANCEL, LADDER, STOCKPILE, CLEAR_STOCKPILE, PRIO
 const SELECTION_COLOR := Color(1, 1, 1, 0.9)
 const PREVIEW_OK := Color(0.3, 1.0, 0.4)
 const PREVIEW_BAD := Color(1.0, 0.25, 0.2)
+const PREVIEW_FONT_SIZE := 18
 ## Pointer travel (screen px) below which a press/release counts as a click. PLACEHOLDER.
 const CLICK_SLOP_PX := 8.0
 
@@ -285,6 +286,13 @@ func _draw() -> void:
 		draw_rect(rect, Color(col, 0.25))
 		BuildingView.draw_art(self, place_key, rect, 0.55)
 		draw_rect(rect, col, false, 3.0)
+		if not preview_result.ok:
+			# Say why right at the pointer (e.g. needs_soil: "needs a floor of dirt or rock").
+			var font: Font = ThemeDB.fallback_font
+			var pos := rect.position + Vector2(-100.0, -10.0)
+			var w := rect.size.x + 200.0
+			draw_string_outline(font, pos, preview_result.message, HORIZONTAL_ALIGNMENT_CENTER, w, PREVIEW_FONT_SIZE, 5, Color.BLACK)
+			draw_string(font, pos, preview_result.message, HORIZONTAL_ALIGNMENT_CENTER, w, PREVIEW_FONT_SIZE, PREVIEW_BAD.lightened(0.4))
 		return
 	if not _dragging:
 		return

@@ -9,7 +9,13 @@ signal quit_requested
 
 const AUTOSAVE_INTERVAL_SEC := 300.0  # PLACEHOLDER
 const TOAST_SECONDS := 3.5
-const INSPECTOR_TOP := 236.0  # below the debug HUD. PLACEHOLDER layout
+## Layout at 1280×720 (PLACEHOLDER): left column = speed/clock, toolbar, then
+## build menu OR colony overview; bottom-left = debug HUD; right column =
+## alerts, then NPC / building inspector; schedule editor bottom-centre.
+const INSPECTOR_TOP := 200.0
+const DEBUG_HUD_WIDTH := 340.0
+const DEBUG_HUD_HEIGHT := 84.0
+const SCHEDULE_POS := Vector2(372, 352)
 
 var session: WorldSession
 var slots: WorldSlots
@@ -29,6 +35,10 @@ var toolbar: Toolbar
 var inspector: NpcInspector
 var building_inspector: BuildingInspector
 var build_menu: BuildMenu
+var clock_view: ClockView
+var alerts_panel: AlertsPanel
+var overview: ColonyOverview
+var schedule_editor: ScheduleEditor
 var debug_hud: Label
 var toast: Label
 
@@ -104,14 +114,22 @@ func _ready() -> void:
 	var top := VBoxContainer.new()
 	top.position = Vector2(16, 16)
 	hud.add_child(top)
+	var top_row := HBoxContainer.new()
+	top_row.add_theme_constant_override("separation", 12)
+	top.add_child(top_row)
 	speed_bar = SpeedBar.new()
-	top.add_child(speed_bar)
+	top_row.add_child(speed_bar)
 	speed_bar.bind_clock(session.clock)
+	clock_view = ClockView.new()
+	clock_view.name = "Clock"
+	clock_view.bind_clock(session.clock)
+	top_row.add_child(clock_view)
 	toolbar = Toolbar.new()
 	top.add_child(toolbar)
 	toolbar.tool_selected.connect(set_tool)
 	toolbar.build_menu_requested.connect(open_build_menu)
 	toolbar.rooms_toggled.connect(set_rooms_visible)
+	toolbar.colony_toggled.connect(set_overview_visible)
 	toolbar.priority_selected.connect(set_priority)
 	toolbar.zoom_requested.connect(func(f: float) -> void: camera.zoom_by_center(f))
 	toolbar.save_requested.connect(func() -> void: save_now(SaveService.Kind.MANUAL))
@@ -124,16 +142,50 @@ func _ready() -> void:
 	build_menu.building_chosen.connect(start_placement)
 	build_menu.close_requested.connect(close_build_menu)
 	top.add_child(build_menu)
+	overview = ColonyOverview.new()
+	overview.name = "ColonyOverview"
+	overview.setup(session.colony, session.inventory, session.materials)
+	overview.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	overview.visible = false
+	overview.npc_clicked.connect(func(id: String) -> void: focus_npc(id))
+	overview.close_requested.connect(func() -> void: set_overview_visible(false))
+	top.add_child(overview)
+	# Debug HUD: compact, bottom-left (the right column holds alerts + inspectors).
 	debug_hud = Label.new()
-	debug_hud.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-	debug_hud.offset_left = -360
-	debug_hud.offset_right = -16
-	debug_hud.offset_top = 16
-	debug_hud.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	debug_hud.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	debug_hud.offset_left = 16
+	debug_hud.offset_right = 16 + DEBUG_HUD_WIDTH
+	debug_hud.offset_top = -DEBUG_HUD_HEIGHT - 8
+	debug_hud.offset_bottom = -8
+	debug_hud.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	debug_hud.add_theme_font_size_override("font_size", 12)
+	debug_hud.add_theme_constant_override("outline_size", 4)
+	debug_hud.add_theme_color_override("font_outline_color", Color.BLACK)
+	debug_hud.add_theme_color_override("font_color", Color(1, 1, 1, 0.8))
 	hud.add_child(debug_hud)
+	alerts_panel = AlertsPanel.new()
+	alerts_panel.name = "Alerts"
+	alerts_panel.setup(session.alerts)
+	alerts_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	alerts_panel.offset_left = -AlertsPanel.PANEL_WIDTH - 16
+	alerts_panel.offset_right = -16
+	alerts_panel.offset_top = 16
+	alerts_panel.alert_clicked.connect(focus_alert)
+	hud.add_child(alerts_panel)
+	schedule_editor = ScheduleEditor.new()
+	schedule_editor.name = "Schedule"
+	schedule_editor.position = SCHEDULE_POS
+	schedule_editor.visible = false
+	schedule_editor.schedule_changed.connect(set_selected_schedule)
+	schedule_editor.apply_all_requested.connect(set_schedule_all)
+	schedule_editor.close_requested.connect(func() -> void: set_schedule_visible(false))
+	hud.add_child(schedule_editor)
 	inspector = NpcInspector.new()
 	inspector.name = "Inspector"
-	inspector.setup(session.jobs, session.inventory, registry)
+	inspector.setup(session.jobs, session.inventory, registry, session.buildings, session.colony)
+	inspector.materials = session.materials
+	inspector.bed_selected.connect(assign_bed)
+	inspector.schedule_requested.connect(func() -> void: set_schedule_visible(not schedule_editor.visible))
 	inspector.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	inspector.offset_left = -NpcInspector.PANEL_WIDTH - 16
 	inspector.offset_right = -16
@@ -145,7 +197,9 @@ func _ready() -> void:
 	hud.add_child(inspector)
 	building_inspector = BuildingInspector.new()
 	building_inspector.name = "BuildingInspector"
-	building_inspector.setup(session.buildings, session.crates, session.inventory, registry)
+	building_inspector.setup(session.buildings, session.crates, session.inventory, registry,
+			session.materials, session.farming, session.kitchens)
+	building_inspector.kitchen_target_changed.connect(set_kitchen_target)
 	building_inspector.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	building_inspector.offset_left = -BuildingInspector.PANEL_WIDTH - 16
 	building_inspector.offset_right = -16
@@ -156,11 +210,14 @@ func _ready() -> void:
 	hud.add_child(building_inspector)
 	toast = Label.new()
 	toast.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	toast.offset_top = -64
-	toast.offset_bottom = -24
-	toast.offset_left = -400
-	toast.offset_right = 400
+	toast.offset_top = -120
+	toast.offset_bottom = -72
+	toast.offset_left = -300
+	toast.offset_right = 300
 	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	toast.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	toast.add_theme_constant_override("outline_size", 5)
 	toast.add_theme_color_override("font_outline_color", Color.BLACK)
 	hud.add_child(toast)
@@ -205,6 +262,8 @@ func set_tool(t: int) -> void:
 
 func open_build_menu() -> void:
 	build_menu.visible = not build_menu.visible
+	if build_menu.visible:
+		set_overview_visible(false)
 	toolbar.set_active_tool(tools.tool)  # the Build button only shows the menu
 
 
@@ -229,6 +288,87 @@ func start_placement(key: StringName) -> CommandResult:
 func set_rooms_visible(on: bool) -> void:
 	room_overlay.visible = on
 	toolbar.set_rooms_active(on)
+
+
+# --- M4a: overview, alerts, schedules, beds, kitchens --------------------
+
+## Colony overview (button / C). Shares the left column with the build menu
+## and the screen centre with the schedule editor, so those close.
+func set_overview_visible(on: bool) -> void:
+	overview.visible = on
+	toolbar.set_colony_active(on)
+	if on:
+		close_build_menu()
+		set_schedule_visible(false)
+		overview.refresh()
+
+
+## Selects an NPC and centres the camera on it (overview rows, alerts).
+func focus_npc(npc_id: String) -> CommandResult:
+	var n := session.colony.get_npc(npc_id)
+	if n == null:
+		var r := CommandResult.failure(&"unknown_npc", "That colonist is gone")
+		_on_command_result(r)
+		return r
+	select_building("")
+	select_npc(npc_id)
+	center_on_tile(n.tile + Vector2i(0, -1))
+	return CommandResult.success({"npc_id": npc_id})
+
+
+func center_on_tile(t: Vector2i) -> void:
+	var px := scale_config.tile_size_px
+	camera.position = CameraController.clamp_center(Vector2((t.x + 0.5) * px, (t.y + 0.5) * px),
+			camera.view_size_world(), camera.world_size_px)
+
+
+## Alert row clicked: its NPC (selected + centred) or else its tile.
+func focus_alert(alert: Dictionary) -> CommandResult:
+	var npc_id: String = alert.get("npc_id", "")
+	if not npc_id.is_empty() and session.colony.get_npc(npc_id) != null:
+		return focus_npc(npc_id)
+	var t: Vector2i = alert.get("tile", AlertService.NO_TILE)
+	if t != AlertService.NO_TILE:
+		center_on_tile(t)
+		return CommandResult.success({"tile": t})
+	return CommandResult.failure(&"no_location", "This alert has no place to show")
+
+
+func set_schedule_visible(on: bool) -> void:
+	var n := selected_npc()
+	on = on and n != null
+	schedule_editor.visible = on
+	inspector.set_schedule_open(on)
+	if on:
+		set_overview_visible(false)
+		schedule_editor.show_schedule(n.nickname, n.schedule)
+
+
+func set_selected_schedule(hours: PackedByteArray) -> CommandResult:
+	var r := session.colony.set_schedule(selected_npc_id, hours)
+	_on_command_result(r)
+	return r
+
+
+func set_schedule_all(hours: PackedByteArray) -> CommandResult:
+	var r := session.colony.set_schedule_all(hours)
+	if r.ok:
+		show_toast("Schedule applied to all %d colonists" % session.colony.count())
+	_on_command_result(r)
+	return r
+
+
+func assign_bed(bed_id: String) -> CommandResult:
+	var r := session.colony.assign_bed(selected_npc_id, bed_id)
+	_on_command_result(r)
+	inspector.refresh()
+	return r
+
+
+func set_kitchen_target(kg: float) -> CommandResult:
+	var r := session.kitchens.set_target_kg(selected_building_id, kg)
+	_on_command_result(r)
+	return r
 
 
 # --- Building selection -------------------------------------------------
@@ -295,6 +435,8 @@ func select_npc(npc_id: String) -> void:
 	move_pending = false
 	npc_layer.set_selected(selected_npc_id)
 	inspector.show_npc(n)
+	if schedule_editor.visible:
+		set_schedule_visible(n != null)  # follow the new selection (or close)
 
 
 func selected_npc() -> Npc:
@@ -408,11 +550,17 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_on_command_result(spawn_debug_npc(tools.world_to_tile(get_global_mouse_position())))
 	elif k.keycode == KEY_R and not k.ctrl_pressed:
 		set_rooms_visible(not room_overlay.visible)
+	elif k.keycode == KEY_C and not k.ctrl_pressed:
+		set_overview_visible(not overview.visible)
 	elif k.keycode == KEY_ESCAPE:
 		if move_pending:
 			cancel_move()
 		elif build_menu.visible:
 			close_build_menu()
+		elif schedule_editor.visible:
+			set_schedule_visible(false)
+		elif overview.visible:
+			set_overview_visible(false)
 		elif tools.tool == ToolController.Tool.SELECT:
 			select_npc("")
 			select_building("")
@@ -436,10 +584,10 @@ func _update_hud() -> void:
 		if not bid.is_empty():
 			tile_name += " + " + session.buildings.def(session.buildings.get_building(bid)["key"]).display_name
 	var room := RoomOverlay.describe(session.rooms.room_at(cursor))
-	debug_hud.text = "%s\nFPS %d | tick %d | tick %.2f ms\nchunks drawn %d | orders %d + %d bld\nNPCs %d | jobs %d\nbuildings %d | rooms %d\nworld hash %s\ncursor (%d, %d) %s%s%s" % [
+	debug_hud.text = "%s | FPS %d | tick %d (%.2f ms)\nchunks %d | orders %d + %d bld | NPCs %d | jobs %d\nbuildings %d | rooms %d | hash %s\ncursor (%d, %d) %s%s%s" % [
 		session.meta.get("name", ""), Engine.get_frames_per_second(), session.clock.tick_index, last_tick_ms,
 		world_view.loaded_chunk_count(), session.designations.count(), session.build_orders.count(),
 		session.colony.count(), session.jobs.job_count(),
 		session.buildings.count(), session.rooms.room_count(), _hash_cache,
-		cursor.x, cursor.y, tile_name, "\nroom: " + room if not room.is_empty() else "",
+		cursor.x, cursor.y, tile_name, " · room: " + room if not room.is_empty() else "",
 		"\nDEV INSTANT EDIT (F9)" if tools.dev_instant else ""]
