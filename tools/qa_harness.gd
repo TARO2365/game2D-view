@@ -137,8 +137,8 @@ static func extra_invariants(ses: WorldSession) -> Array[String]:
 			if b == null or not (b as Dictionary).has(job.id):
 				errs.append("QA: open %s missing from its chunk bucket" % job.id)
 		match job.kind:
-			Job.KIND_HAUL:
-				pass
+			Job.KIND_HAUL, Job.KIND_FARM, Job.KIND_COOK, Job.KIND_FEED:
+				pass  # Lead (M4a): these jobs have no player designation/priority to compare
 			Job.KIND_BUILDING:
 				# Building orders live in BuildOrders, not in the tile designations (M3).
 				var o := ses.build_orders.get_order(job.order_id) if ses.build_orders != null else {}

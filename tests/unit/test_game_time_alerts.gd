@@ -3,16 +3,20 @@ extends GutTest
 
 func test_time_of_day() -> void:
 	assert_eq(GameTime.day(0), 1)
-	assert_eq(GameTime.hour(0), 0)
-	assert_eq(GameTime.day(GameTime.TICKS_PER_DAY), 2)
-	var t := GameTime.TICKS_PER_DAY * 2 + 14 * GameTime.TICKS_PER_HOUR + GameTime.TICKS_PER_HOUR / 3
+	assert_eq(GameTime.hour(0), GameTime.START_HOUR, "new worlds start in the morning")
+	assert_eq(GameTime.label(0), "Day 1  06:00")
+	var midnight := GameTime.TICKS_PER_DAY - GameTime.START_OFFSET
+	assert_eq(GameTime.day(midnight), 2)
+	assert_eq(GameTime.hour(midnight), 0)
+	var t := GameTime.TICKS_PER_DAY * 2 + 14 * GameTime.TICKS_PER_HOUR + GameTime.TICKS_PER_HOUR / 3 - GameTime.START_OFFSET
 	assert_eq(GameTime.day(t), 3)
 	assert_eq(GameTime.hour(t), 14)
 	assert_eq(GameTime.minute(t), 19)  # 83/250 of an hour, floored
 	assert_eq(GameTime.label(t), "Day 3  14:19")
-	assert_true(GameTime.is_night(22 * GameTime.TICKS_PER_HOUR))
-	assert_true(GameTime.is_night(3 * GameTime.TICKS_PER_HOUR))
-	assert_false(GameTime.is_night(12 * GameTime.TICKS_PER_HOUR))
+	var o := GameTime.START_OFFSET
+	assert_true(GameTime.is_night(22 * GameTime.TICKS_PER_HOUR - o))
+	assert_true(GameTime.is_night(27 * GameTime.TICKS_PER_HOUR - o))
+	assert_false(GameTime.is_night(12 * GameTime.TICKS_PER_HOUR - o))
 	assert_eq(GameTime.TICKS_PER_HOUR * 24, GameTime.TICKS_PER_DAY)
 
 

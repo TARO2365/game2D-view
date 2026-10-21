@@ -61,6 +61,9 @@ static func from_grid(world_meta: Dictionary, world_grid: WorldGrid) -> WorldSes
 	s.jobs = JobManager.new(s.grid, s.designations, s.inventory, s.stockpiles, s.nav, s.ids,
 			s.buildings, s.crates, s.build_orders)
 	s.colony = Colony.new(s.grid, s.nav, s.jobs, s.ids, int(world_meta.get("seed", 0)))
+	# M4a: needs, schedules, food and sleep (off until attached).
+	s.jobs.attach_m4a(s.materials, s.farming, s.kitchens)
+	s.colony.attach_m4a(s.alerts, s.rooms)
 	s.clock.ticked.connect(s.simulate_tick)
 	return s
 

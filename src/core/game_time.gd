@@ -7,19 +7,23 @@ const TICKS_PER_DAY := 6000
 const TICKS_PER_HOUR := 250
 const NIGHT_START_HOUR := 20
 const NIGHT_END_HOUR := 6
+## A new world (tick 0) starts on Day 1 at 06:00 so colonists begin with a
+## work day instead of sleeping (Lead, M4a wiring).
+const START_HOUR := 6
+const START_OFFSET := START_HOUR * TICKS_PER_HOUR
 
 
 ## 1-based day number.
 static func day(tick: int) -> int:
-	return tick / TICKS_PER_DAY + 1
+	return (tick + START_OFFSET) / TICKS_PER_DAY + 1
 
 
 static func hour(tick: int) -> int:
-	return (tick % TICKS_PER_DAY) / TICKS_PER_HOUR
+	return ((tick + START_OFFSET) % TICKS_PER_DAY) / TICKS_PER_HOUR
 
 
 static func minute(tick: int) -> int:
-	return (tick % TICKS_PER_HOUR) * 60 / TICKS_PER_HOUR
+	return ((tick + START_OFFSET) % TICKS_PER_HOUR) * 60 / TICKS_PER_HOUR
 
 
 ## Visual only in M4a.
