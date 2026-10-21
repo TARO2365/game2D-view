@@ -17,6 +17,9 @@ extends Resource
 @export var work_ticks: int = 0
 ## Every tile under the bottom row must be solid.
 @export var needs_floor: bool = true
+## Tile keys the floor must be made of (M4a: farm plot needs dirt or rock).
+## Empty = any solid tile. Only checked when needs_floor.
+@export var floor_materials: Array[StringName] = []
 ## Passable, but a room boundary. Must stand in a 1-wide wall gap: solid tile
 ## directly above the top tile (and a floor when needs_floor).
 @export var is_door: bool = false

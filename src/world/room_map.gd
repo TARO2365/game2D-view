@@ -4,7 +4,8 @@ extends RefCounted
 ## A room is a 4-connected set of non-solid, non-door tiles bounded by solid
 ## tiles / door tiles, with at most MAX_ROOM_TILES tiles, not touching the
 ## world border or any tile above the surface line (open sky).
-## Type: bedroom (bed) > storage (crate) > dining (table) > &"room".
+## Type (M4a order, D-028): bedroom (bed) > kitchen > dining (table) >
+## storage (crate) > farm (farm plot) > &"room".
 ##
 ## Only the area around a `tiles_changed` / `buildings_changed` rect is
 ## recomputed: rooms overlapping the rect grown by one tile are dissolved and
@@ -16,7 +17,7 @@ signal rooms_changed(rect: Rect2i)
 
 const MAX_ROOM_TILES := 128  # PLACEHOLDER (D-021)
 ## First match wins.
-const TYPE_ORDER: Array[StringName] = [&"bedroom", &"storage", &"dining"]
+const TYPE_ORDER: Array[StringName] = [&"bedroom", &"kitchen", &"dining", &"storage", &"farm"]
 const TYPE_ROOM := &"room"
 
 var grid: WorldGrid

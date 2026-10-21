@@ -25,8 +25,14 @@ func _dig(r: Rect2i) -> void:
 	assert_true(g.apply_edit(r, WorldGrid.Edit.DIG).ok, "dig %s" % r)
 
 
+## First accepted material with the definition's kg.
+func _mats(key: StringName) -> Dictionary:
+	var d := b.def(key)
+	return {d.materials[0]: d.kg} if d != null else ROCK
+
+
 func _place(key: StringName, origin: Vector2i) -> String:
-	var r := b.place(key, origin, ROCK)
+	var r := b.place(key, origin, _mats(key))
 	assert_true(r.ok, "place %s: %s" % [key, r])
 	return r.data.get("id", "")
 
@@ -105,18 +111,48 @@ func test_type_by_furniture() -> void:
 	var table := _place(&"table", Vector2i(11, 22))
 	assert_eq(rooms.room_at(Vector2i(12, 20))["type"], &"dining")
 	var crate := _place(&"crate", Vector2i(14, 22))
-	assert_eq(rooms.room_at(Vector2i(12, 20))["type"], &"storage", "storage beats dining")
+	assert_eq(rooms.room_at(Vector2i(12, 20))["type"], &"dining", "dining beats storage (M4a order)")
 	var bed := _place(&"bed", Vector2i(18, 22))
 	var room := rooms.room_at(Vector2i(12, 20))
 	assert_eq(room["type"], &"bedroom", "bedroom beats all")
 	assert_eq(room["building_ids"], [table, crate, bed] as Array[String])
 	assert_eq(room["size"], 33, "furniture tiles are part of the room")
 	b.remove(bed)
-	assert_eq(rooms.room_at(Vector2i(12, 20))["type"], &"storage")
-	b.remove(crate)
 	assert_eq(rooms.room_at(Vector2i(12, 20))["type"], &"dining")
 	b.remove(table)
+	assert_eq(rooms.room_at(Vector2i(12, 20))["type"], &"storage")
+	b.remove(crate)
 	assert_eq(rooms.room_at(Vector2i(12, 20))["type"], &"room")
+
+
+## Every combination of the tagged buildings (2^5 = 32) in one room:
+## bedroom > kitchen > dining > storage > farm > room (M4a §6).
+func test_type_priority_all_combinations() -> void:
+	_dig(Rect2i(10, 20, 11, 3))  # dirt floor at row 23: farm plots are allowed
+	var spots := [
+		[&"bed", Vector2i(10, 22), &"bedroom"],
+		[&"kitchen", Vector2i(12, 22), &"kitchen"],
+		[&"table", Vector2i(14, 22), &"dining"],
+		[&"crate", Vector2i(16, 22), &"storage"],
+		[&"farm_plot", Vector2i(17, 22), &"farm"],
+	]
+	var full := RoomMap.new(g, b)
+	for mask in 32:
+		var placed: Array[String] = []
+		var expected := &"room"
+		for i in spots.size():
+			if mask & (1 << i):
+				placed.append(_place(spots[i][0], spots[i][1]))
+				if expected == &"room":
+					expected = spots[i][2]  # spots are listed in priority order
+		var room := rooms.room_at(Vector2i(20, 20))
+		assert_eq(room.get("type"), expected, "mask %d" % mask)
+		assert_eq(room.get("building_ids"), placed, "mask %d" % mask)
+		full.rebuild_all()
+		assert_eq(_canonical(rooms), _canonical(full), "incremental == full, mask %d" % mask)
+		for id in placed:
+			b.remove(id)
+	assert_eq(rooms.room_at(Vector2i(20, 20)).get("type"), &"room")
 
 
 func test_furniture_type_per_side_of_door() -> void:
@@ -177,7 +213,7 @@ func test_incremental_equals_full_rebuild_randomized() -> void:
 	var reference := RoomMap.new(g, b)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20261020
-	var keys: Array[StringName] = [&"door", &"crate", &"bed", &"table"]
+	var keys: Array[StringName] = [&"door", &"crate", &"bed", &"table", &"farm_plot", &"kitchen"]
 	var max_rooms := 0
 	var placed := 0
 	var lost := [0]
@@ -197,7 +233,8 @@ func test_incremental_equals_full_rebuild_randomized() -> void:
 			# Drop the origin onto the first floor below p so placements succeed often.
 			while p.y < 38 and not g.is_solid_at(p + Vector2i.DOWN):
 				p.y += 1
-			if b.place(keys[rng.randi_range(0, keys.size() - 1)], p, ROCK).ok:
+			var key := keys[rng.randi_range(0, keys.size() - 1)]
+			if b.place(key, p, _mats(key)).ok:
 				placed += 1
 		else:
 			var all := b.all_ids()

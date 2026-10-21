@@ -133,7 +133,7 @@ func test_command_stop_ignores_job_for_a_while() -> void:
 
 func test_set_work_enabled_validates() -> void:
 	var n := col.spawn_npc(Vector2i(5, 9))
-	assert_eq(col.set_work_enabled(n.id, &"cook", false).code, &"invalid_work")
+	assert_eq(col.set_work_enabled(n.id, &"sing", false).code, &"invalid_work")
 	assert_eq(col.set_work_enabled("npc:99", &"dig", false).code, &"unknown_npc")
 	assert_true(col.set_work_enabled(n.id, &"haul", false).ok)
 	assert_false(n.work_enabled[&"haul"])

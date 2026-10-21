@@ -93,7 +93,7 @@ func test_v3_round_trip_buildings_crates_rooms() -> void:
 	assert_true(SaveService.save(s, dir, SaveService.Kind.MANUAL).ok)
 	var r := _load(s)
 	assert_true(r.ok, str(r))
-	assert_eq(r.data["migrated_from"], 3)
+	assert_eq(r.data["migrated_from"], SaveService.SAVE_VERSION)
 	for k in r.data["dropped"]:
 		assert_eq(r.data["dropped"][k], 0, "dropped %s" % k)
 	var l: WorldSession = r.data["session"]
@@ -104,6 +104,46 @@ func test_v3_round_trip_buildings_crates_rooms() -> void:
 	assert_eq(l.rooms.room_count(), s.rooms.room_count(), "rooms rebuilt on load")
 	assert_eq(l.build_orders.orders(), s.build_orders.orders(), "building orders survive")
 	assert_eq(l.jobs.check_invariants(), [] as Array[String])
+
+
+## First tile >= from_x where `width` surface columns are level (origin = tile above the floor).
+func _flat_spot(s: WorldSession, width: int, from_x: int) -> Vector2i:
+	for x in range(from_x, s.grid.width - width - 1):
+		var ok := true
+		for i in width:
+			ok = ok and s.grid.surface_y[x + i] == s.grid.surface_y[x]
+		if ok:
+			return Vector2i(x, s.grid.surface_y[x] - 1)
+	return Vector2i(-1, -1)
+
+
+func test_new_world_has_starting_rations() -> void:
+	var s := _session()
+	assert_almost_eq(float(s.inventory.total_kg_by_material().get(&"ration", 0.0)),
+			WorldSession.STARTING_RATION_KG, 0.001)
+
+
+func test_v4_round_trip_farming_and_kitchens() -> void:
+	var s := _session()
+	var farm_at := _flat_spot(s, 2, 5)
+	var kitchen_at := _flat_spot(s, 2, farm_at.x + 3)
+	assert_true(s.buildings.place(&"farm_plot", farm_at, {}).ok)
+	assert_true(s.buildings.place(&"kitchen", kitchen_at, {}).ok)
+	var farm := s.buildings.building_at(farm_at)
+	var kitchen := s.buildings.building_at(kitchen_at)
+	assert_true(s.farming.plant(farm).ok)
+	for t in range(1, 101):
+		s.farming.update(t)
+	assert_true(s.kitchens.set_target_kg(kitchen, 25.0).ok)
+	assert_true(SaveService.save(s, dir, SaveService.Kind.MANUAL).ok)
+	var r := _load(s)
+	assert_true(r.ok, str(r))
+	for k in r.data["dropped"]:
+		assert_eq(r.data["dropped"][k], 0, "dropped %s" % k)
+	var l: WorldSession = r.data["session"]
+	assert_eq(l.farming.stage(farm), Farming.Stage.GROWING)
+	assert_almost_eq(l.farming.progress(farm), s.farming.progress(farm), 0.0001)
+	assert_eq(l.kitchens.target_kg(kitchen), 25.0)
 
 
 func test_orphan_crate_items_are_rescued() -> void:

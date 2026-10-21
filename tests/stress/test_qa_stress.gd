@@ -116,6 +116,9 @@ func test_dig_and_build_accounting_orders_only() -> void:
 	for m in expect_spawn:
 		assert_almost_eq(float(spawned.get(m, 0.0)), float(expect_spawn[m]), 0.001, "drops of %s" % m)
 	for m in spawned:
+		# Lead (M4a): food (starting rations, harvests, meals) is spawned by design, not by digging.
+		if h.s.materials.is_food(m):
+			continue
 		assert_true(expect_spawn.has(m), "no %s spawned without a dug tile" % m)
 	var consumed := 0.0
 	for v in h.s.inventory.consumed_kg_by_material().values():

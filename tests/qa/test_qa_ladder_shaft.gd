@@ -116,9 +116,12 @@ func test_deep_cave_reached_only_through_player_ordered_ladder_shaft() -> void:
 		assert_gt(v, 0.0, "work progressed after every load (%s)" % [progress_after_load])
 	assert_gt(max_carried_depth, DEPTH - 4, "items were physically carried up from the cave")
 	# Conservation: cave drops (7 x 50 kg) + 800 kg spawned - 24 ladders x 25 kg.
+	# Lead (M4a): food (starting rations, eaten over time) is excluded; this checks building materials only.
 	var total := 0.0
-	for v in h.s.inventory.total_kg_by_material().values():
-		total += float(v)
+	var totals := h.s.inventory.total_kg_by_material()
+	for m in totals:
+		if not h.s.materials.is_food(m):
+			total += float(totals[m])
 	assert_almost_eq(total, 800.0 + targets.size() * 50.0 - DEPTH * 25.0, 0.01)
 	gut.p("shaft: finished at tick %d, loads %d, progress per segment %s, max carry depth %d, stuck %s" % [
 			h.now(), h.loads_done, progress_after_load, max_carried_depth, h.stuck_reports])
