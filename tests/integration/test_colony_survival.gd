@@ -36,6 +36,14 @@ func before_all() -> void:
 	reg = TileRegistry.load_default()
 
 
+## First tick of the day at hour:minute (GameTime may offset tick 0).
+static func _at(hour: int, minute: int = 0) -> int:
+	for tk in GameTime.TICKS_PER_DAY:
+		if GameTime.hour(tk) == hour and GameTime.minute(tk) == minute:
+			return tk
+	return 0
+
+
 func _setup() -> void:
 	g = WorldGrid.new(SIZE.x, SIZE.y, reg)
 	var tl := PackedByteArray()
@@ -64,7 +72,7 @@ func _setup() -> void:
 	col = Colony.new(g, nav, jobs, ids, 2026)
 	alerts = AlertService.new()
 	col.attach_m4a(alerts, rooms)
-	t = 6 * H
+	t = _at(6)
 
 
 ## Advances one tick in session order; false (and a test failure) on a broken invariant.
@@ -103,6 +111,7 @@ func test_ten_days_with_farms_and_kitchen() -> void:
 	for x in [28, 30, 32]:
 		col.spawn_npc(Vector2i(x, 9))
 	var daily: Array = []
+	var day0 := t
 	var min_hunger := 100.0
 	var min_health := 100.0
 	var collapses := 0
@@ -114,7 +123,7 @@ func test_ten_days_with_farms_and_kitchen() -> void:
 			min_health = minf(min_health, n.health)
 			if not n.is_ok():
 				collapses += 1
-		if (t - 6 * H) % DAY == 0:
+		if (t - day0) % DAY == 0:
 			daily.append("day %d %s" % [GameTime.day(t), _food()])
 	gut.p("food by day: %s" % [daily])
 	gut.p("lowest hunger %.1f, lowest health %.1f, eaten %s" % [min_hunger, min_health,

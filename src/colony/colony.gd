@@ -81,6 +81,46 @@ func attach_m4a(alert_service: AlertService, room_map: RoomMap) -> void:
 	alerts = alert_service
 	rooms = room_map
 	needs_enabled = true
+	var b := jobs.buildings
+	if b != null and not b.buildings_changed.is_connected(_on_buildings_changed):
+		b.buildings_changed.connect(_on_buildings_changed)
+		b.building_lost.connect(_on_building_lost)
+
+
+func _on_buildings_changed(_rect: Rect2i) -> void:
+	_release_missing_furniture()
+
+
+func _on_building_lost(_id: String, _key: StringName, _origin: Vector2i, _materials: Dictionary) -> void:
+	_release_missing_furniture()
+
+
+## A bed or table that was deconstructed, lost its floor or was removed:
+## its owner / sleeper / eater lets go of it (a sleeper keeps sleeping on
+## the floor, an eater eats standing) and beds are handed out again.
+func _release_missing_furniture() -> void:
+	var beds_changed := false
+	for n: Npc in _npcs.values():
+		if not n.bed_id.is_empty() and not _is_bed(n.bed_id):
+			n.bed_id = ""
+			beds_changed = true
+			if n._activity == &"sleep" and n._in_bed:
+				n._in_bed = false
+				_sleep_factor[n.id] = FLOOR_FACTOR
+			elif n._activity == &"sleep" and n._phase == &"go":
+				n._phase = &""  # walking to a bed that is gone: decide again
+				if not n._moving:
+					n._path.clear()
+		if not n._table_id.is_empty() and not _is_table(n._table_id):
+			_release_table(n)
+			if n._activity == &"eat" and n._phase == &"table" and not n._moving:
+				n._path.clear()
+	for tid: String in _table_users.keys():
+		if not _is_table(tid):
+			_table_users.erase(tid)
+	_assign_beds()  # a new bed (placed or freed) goes to whoever has none
+	if beds_changed:
+		npcs_changed.emit()
 
 
 func deaths() -> int:
@@ -688,6 +728,8 @@ func _do_sleep(n: Npc, tick: int) -> void:
 	match n._phase:
 		&"", &"go":
 			n._phase = &"go"
+			if not _is_bed(n.bed_id):
+				_assign_beds()  # a free bed may exist (bed checks are otherwise periodic)
 			var bed := n.bed_id if _is_bed(n.bed_id) else ""
 			if bed.is_empty():
 				_fall_asleep(n, false)
@@ -759,6 +801,11 @@ func _release_table(n: Npc) -> void:
 func _is_bed(bid: String) -> bool:
 	return not bid.is_empty() and jobs.buildings != null \
 			and jobs.buildings.get_building(bid).get("key", &"") == &"bed"
+
+
+func _is_table(bid: String) -> bool:
+	return not bid.is_empty() and jobs.buildings != null \
+			and jobs.buildings.get_building(bid).get("key", &"") == &"table"
 
 
 ## Standable tiles of a bed's footprint (the NPC lies on the bed).
