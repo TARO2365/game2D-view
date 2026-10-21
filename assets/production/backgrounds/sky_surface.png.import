@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://jiwwghgt0r18"
+path="res://.godot/imported/sky_surface.png-fa7bc79112512897a53b1a537df5a97a.image"
+
+[deps]
+
+source_file="res://assets/production/backgrounds/sky_surface.png"
+dest_files=["res://.godot/imported/sky_surface.png-fa7bc79112512897a53b1a537df5a97a.image"]
+
+[params]
+

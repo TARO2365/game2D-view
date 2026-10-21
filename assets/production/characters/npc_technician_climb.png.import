@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://bdinqpgs55ddd"
+path="res://.godot/imported/npc_technician_climb.png-e6aa40cb3d37565e7f169eccd2ddca3c.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_technician_climb.png"
+dest_files=["res://.godot/imported/npc_technician_climb.png-e6aa40cb3d37565e7f169eccd2ddca3c.image"]
+
+[params]
+

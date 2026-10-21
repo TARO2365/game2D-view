@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://cu1fetaksq8dr"
+path="res://.godot/imported/npc_technician_carry.png-e976ad04e66a8c31cd41d9b85f010551.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_technician_carry.png"
+dest_files=["res://.godot/imported/npc_technician_carry.png-e976ad04e66a8c31cd41d9b85f010551.image"]
+
+[params]
+

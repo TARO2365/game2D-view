@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://c32bavcfe500x"
+path="res://.godot/imported/npc_scientist_idle.png-1d4081132ab99804bb3560e4e0c1935e.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_scientist_idle.png"
+dest_files=["res://.godot/imported/npc_scientist_idle.png-1d4081132ab99804bb3560e4e0c1935e.image"]
+
+[params]
+

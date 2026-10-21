@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://bnyykoplfm0p0"
+path="res://.godot/imported/npc_scientist_sleep.png-017cb1ed73a62a2125aa7e463e7cc3fb.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_scientist_sleep.png"
+dest_files=["res://.godot/imported/npc_scientist_sleep.png-017cb1ed73a62a2125aa7e463e7cc3fb.image"]
+
+[params]
+

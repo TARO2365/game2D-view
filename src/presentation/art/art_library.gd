@@ -11,13 +11,19 @@ static var base_dir := "res://assets/production/"
 ## Fixed sprite-sheet cell sizes (ASSET_SPEC §4, §6). Cells have no padding.
 const TILE_PX := 64
 const NPC_CELL := Vector2i(128, 192)
+## Lying animations (sleep) use a wider cell; feet-line pivot unchanged.
+const WIDE_ANIMS: Array[StringName] = [&"sleep"]
+const WIDE_CELL := Vector2i(192, 192)
 ## Where the hands hold a carried item in a sheet cell (feet pivot space).
 const SHEET_CARRY_AT := Vector2(22, -80)
-## Missing animation -> sheets to try instead, in order (ASSET_SPEC §6).
+## Missing animation -> sheets to try instead, in order (ASSET_SPEC §6,
+## D-027). Only idle borrows a still walk frame (the view adds breathing);
+## every other missing animation uses the code rig (empty list) instead of
+## sliding borrowed walk frames.
 const NPC_FALLBACK := {
-	&"idle": [&"walk"], &"walk": [], &"carry": [&"walk"], &"climb": [&"walk"],
-	&"dig": [&"build", &"walk"], &"build": [&"dig", &"walk"],
-	&"sleep": [&"idle", &"walk"], &"fall": [&"idle", &"walk"],
+	&"idle": [&"walk"], &"walk": [], &"carry": [], &"climb": [],
+	&"dig": [], &"build": [], &"sleep": [], &"fall": [],
+	&"eat": [&"idle"],
 }
 ## Animations that, when borrowed from a moving sheet, show one still frame.
 const HOLD_ANIMS: Array[StringName] = [&"idle", &"sleep", &"fall"]
@@ -156,7 +162,7 @@ static func npc_anim_sheet(role: StringName, anim: StringName) -> Dictionary:
 	if tex != null:
 		res = {"sheet": tex, "anim": anim, "hold": false, "frame": 0}
 	else:
-		for alt: StringName in NPC_FALLBACK.get(anim, [&"walk"]):
+		for alt: StringName in NPC_FALLBACK.get(anim, []):
 			tex = npc_sheet(role, alt)
 			if tex != null:
 				var hold: bool = anim in HOLD_ANIMS and not (alt in HOLD_ANIMS)
@@ -181,9 +187,49 @@ static func stand_frame(img: Image) -> int:
 	return best
 
 
-## Number of frames in a sheet (cells are NPC_CELL, one row).
-static func frame_count(sheet: Texture2D) -> int:
-	return maxi(1, sheet.get_width() / NPC_CELL.x)
+## Per-sheet motion metrics, measured once from the pixels (cached):
+## "cycle_px" = ground distance one full loop of the sheet covers (walk-type
+## sheets: two steps, from the spread of the soles), "dx" = per-frame x
+## offsets that put each frame's head centre on the sheet median (cancels
+## head wobble between AI frames, clamped to a few px).
+static func sheet_metrics(role: StringName, anim: StringName) -> Dictionary:
+	var ck := "metrics|%s|%s|%s" % [base_dir, role, anim]
+	if _cache.has(ck):
+		return _cache[ck]
+	var img := image(npc_sheet_path(role, anim))
+	var res := {"cycle_px": float(TILE_PX), "dx": PackedFloat32Array()}
+	if img != null:
+		var n := maxi(1, img.get_width() / NPC_CELL.x)
+		var soles: Array[int] = []
+		var heads: Array[float] = []
+		for f in n:
+			var cell := img.get_region(Rect2i(f * NPC_CELL.x, 0, NPC_CELL.x, NPC_CELL.y))
+			var sole := cell.get_region(Rect2i(0, NPC_CELL.y - 10, NPC_CELL.x, 10)).get_used_rect()
+			soles.append(sole.size.x)
+			var used := cell.get_used_rect()
+			var head := cell.get_region(Rect2i(0, used.position.y, NPC_CELL.x, 28)).get_used_rect()
+			heads.append(head.get_center().x if head.size.x > 0 else NPC_CELL.x / 2.0)
+		var sorted := heads.duplicate()
+		sorted.sort()
+		var med: float = sorted[sorted.size() / 2]
+		var dx := PackedFloat32Array()
+		for h in heads:
+			dx.append(clampf(med - h, -4.0, 4.0))
+		res["dx"] = dx
+		var spread: float = soles.max() - 0.55 * soles.min()
+		res["cycle_px"] = clampf(2.0 * spread, 40.0, 160.0)
+	_cache[ck] = res
+	return res
+
+
+## Cell size of an animation sheet: NPC_CELL, wider for lying poses.
+static func cell_size(anim: StringName) -> Vector2i:
+	return WIDE_CELL if anim in WIDE_ANIMS else NPC_CELL
+
+
+## Number of frames in a sheet of an animation (one row of cell_size cells).
+static func frame_count(sheet: Texture2D, anim: StringName = &"") -> int:
+	return maxi(1, sheet.get_width() / cell_size(anim).x)
 
 
 ## Region of frame `i` in a one-row sheet.

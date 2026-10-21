@@ -80,7 +80,16 @@ The code copy of this palette is `src/presentation/art/art_palette.gd`.
 | `terrain_bedrock.png` | near-black dense stone, faint cracks, no detail that suggests it can be dug |
 | `terrain_concrete.png` | grey poured-concrete panel, darker frame, horizontal seam, 4 rivets |
 
-Edge transitions between materials and to open air are **not** in V1 (would need autotiling in WorldView, which the
+**Smooth terrain (D-027).** The game now renders terrain with `TerrainRenderer`, a per-chunk shader:
+- Materials are world-space continuous textures from `terrain_hd/terrain_<material>.png` (512 × 512,
+  seamless, made by the importer from variant 1). Natural materials repeat every 4 tiles; concrete repeats every
+  tile, so it reads as panels.
+- Edges are rounded and organic, computed from neighbours, with a dark outline and a light top highlight.
+  Where two materials meet, the border is noisy with a dark seam.
+- Dug space gets a cavity shadow, and everything darkens slightly with depth.
+- The 64 px strips below remain the fallback (`WorldView.smooth_terrain = false`).
+
+The 64 px strips' own edge transitions between materials and to open air are **not** in V1 (would need autotiling in WorldView, which the
 UI Agent and Lead own). Proposed for V2: a 47-tile blob set per material.
 
 ## 5. Structures and backgrounds

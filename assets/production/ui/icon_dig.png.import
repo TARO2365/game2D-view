@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://b2rehnwsdfach"
+path="res://.godot/imported/icon_dig.png-55404e4a91bf66ccba3a077bc9429eec.image"
+
+[deps]
+
+source_file="res://assets/production/ui/icon_dig.png"
+dest_files=["res://.godot/imported/icon_dig.png-55404e4a91bf66ccba3a077bc9429eec.image"]
+
+[params]
+

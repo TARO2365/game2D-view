@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://dy3kai2th8fec"
+path="res://.godot/imported/npc_cook_sleep.png-11e9176849dbd9364edd6d1729bbf02f.image"
+
+[deps]
+
+source_file="res://assets/production/characters/npc_cook_sleep.png"
+dest_files=["res://.godot/imported/npc_cook_sleep.png-11e9176849dbd9364edd6d1729bbf02f.image"]
+
+[params]
+
