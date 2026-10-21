@@ -20,6 +20,14 @@ func _init() -> void:
 	quit()
 
 
+## First tick of the day at hour:minute (GameTime may offset tick 0).
+static func _at(hour: int, minute: int = 0) -> int:
+	for tk in GameTime.TICKS_PER_DAY:
+		if GameTime.hour(tk) == hour and GameTime.minute(tk) == minute:
+			return tk
+	return 0
+
+
 ## needs = false: the M2/M3 dig + haul colony; true: the same colony with M4a
 ## needs on (hunger spread out, starting at 21:30 so the 22:00 bedtime
 ## happens during the run), food, beds, tables, farms and kitchens.
@@ -46,7 +54,7 @@ func _bench(needs: bool) -> void:
 	if needs:
 		jobs.attach_m4a(mats, farming, kitchens)
 		col.attach_m4a(alerts, rooms)
-		t_start = 21 * GameTime.TICKS_PER_HOUR + GameTime.TICKS_PER_HOUR / 2
+		t_start = _at(21, 30)
 
 	# Stockpile: 24 surface tiles around the centre.
 	var cx := size.x / 2

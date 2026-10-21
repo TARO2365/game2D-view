@@ -1742,15 +1742,29 @@ func _all_blocked(job: Job, tick: int) -> bool:
 		return false
 	var eligible := 0
 	for npc in colony.all_npcs():
-		if not npc.work_enabled.get(job.work_type(), false):
-			continue
+		if not npc.work_enabled.get(job.work_type(), false) or not npc.is_ok():
+			continue  # collapsed NPCs are no workers
 		eligible += 1
 		if int(job._marks.get(npc.id, -1)) > tick:
 			continue
-		if npc._region_valid and not _job_in_region(job, npc):
-			continue
+		if npc._region_valid:
+			if not _job_in_region(job, npc):
+				continue
+			if _material_only_outside(job, npc):
+				continue  # confined with the site but not with any material (structural)
 		return false
 	return eligible > 0
+
+
+## Confined npc can reach the site of a material job, but every usable
+## stack lies outside its region (and some exists: else it is "no material").
+func _material_only_outside(job: Job, npc: Npc) -> bool:
+	if not job.needs_material() and job.kind != Job.KIND_FEED:
+		return false
+	var rec := _recipe(job)
+	if job.kind != Job.KIND_FEED and (rec.is_empty() or _site(job) + KG_EPSILON >= float(rec["kg"])):
+		return false
+	return _find_material(job, npc, true).is_empty() and not _find_material(job, npc, false).is_empty()
 
 
 func _set_job_unreachable(job: Job, tick: int, geometric: bool = false) -> void:

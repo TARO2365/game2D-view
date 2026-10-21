@@ -217,6 +217,10 @@ func test_qa3_repro_fixed() -> void:
 
 func test_wall_line_many_builders() -> void:
 	_setup(Vector2i(40, 30))
+	# Time-dependent (M4a, Colony Agent): this 12 000-tick (2-day) run has no
+	# food, so with needs on the builders starve and collapse, and nobody is
+	# left to keep the leftovers flagged. The test is about reach rules: needs off.
+	ses.colony.needs_enabled = false
 	for x in range(1, 8):
 		ses.inventory.spawn_ground(&"rock", 100.0, Vector2i(x, 9))
 	ses.designations.designate(Rect2i(14, 7, 6, 3), K.BUILD_WALL)   # 6x3 block, 18 walls

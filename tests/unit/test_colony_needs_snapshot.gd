@@ -72,6 +72,14 @@ func before_all() -> void:
 	reg = TileRegistry.load_default()
 
 
+## First tick of the day at hour:minute (GameTime may offset tick 0).
+static func _at(hour: int, minute: int = 0) -> int:
+	for tk in GameTime.TICKS_PER_DAY:
+		if GameTime.hour(tk) == hour and GameTime.minute(tk) == minute:
+			return tk
+	return 0
+
+
 func _load(s: Dictionary) -> Env:
 	var g := FS.make_grid(reg, Vector2i(40, 30))
 	g.tiles = s["tiles"]
@@ -105,7 +113,7 @@ func _run(e: Env, max_ticks: int, cond: Callable = Callable()) -> bool:
 
 
 func test_round_trip_mid_eat_sleep_cook_and_collapsed() -> void:
-	t = 6 * H
+	t = _at(6)
 	var e := Env.new(FS.make_grid(reg, Vector2i(40, 30)))
 	var eater := e.col.spawn_npc(Vector2i(5, 9))
 	var sleeper := e.col.spawn_npc(Vector2i(30, 9))

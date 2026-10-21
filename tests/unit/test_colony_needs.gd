@@ -33,6 +33,14 @@ func before_all() -> void:
 	reg = TileRegistry.load_default()
 
 
+## First tick of the day at hour:minute (GameTime may offset tick 0).
+static func _at(hour: int, minute: int = 0) -> int:
+	for tk in GameTime.TICKS_PER_DAY:
+		if GameTime.hour(tk) == hour and GameTime.minute(tk) == minute:
+			return tk
+	return 0
+
+
 func before_each() -> void:
 	g = FS.make_grid(reg, Vector2i(40, 30))
 	ids = StableIdAllocator.new()
@@ -52,7 +60,7 @@ func before_each() -> void:
 	col = Colony.new(g, nav, jobs, ids, 42)
 	alerts = AlertService.new()
 	col.attach_m4a(alerts, rooms)
-	t = 6 * H  # 06:00
+	t = _at(6)  # 06:00 (GameTime may offset tick 0)
 
 
 func _run(max_ticks: int, cond: Callable = Callable()) -> bool:
@@ -179,7 +187,7 @@ func test_no_food_raises_alert_and_npc_keeps_working() -> void:
 # --- Sleeping ------------------------------------------------------------------
 
 func test_sleeps_in_own_bed_at_night_and_wakes() -> void:
-	t = 21 * H + H / 2  # 21:30
+	t = _at(21, 30)
 	var n := col.spawn_npc(Vector2i(5, 9))
 	n.stamina = 50.0
 	var bed: String = bld.place(&"bed", Vector2i(15, 9), {&"dirt": 50.0}).data["id"]
@@ -195,6 +203,37 @@ func test_sleeps_in_own_bed_at_night_and_wakes() -> void:
 	assert_true(_run(10 * H, func() -> bool: return n._activity != &"sleep"))
 	assert_eq(GameTime.hour(t), 6)
 	assert_almost_eq(n.stamina, 100.0, 0.001)
+
+
+func test_bed_and_table_released_when_removed_or_lost() -> void:
+	t = _at(21, 30)
+	var n := col.spawn_npc(Vector2i(5, 9))
+	n.stamina = 50.0
+	var bed1: String = bld.place(&"bed", Vector2i(15, 9), {&"dirt": 50.0}).data["id"]
+	assert_true(_run(20 * 60, func() -> bool: return n._phase == &"asleep" and n._in_bed))
+	assert_eq(n.bed_id, bed1)
+	# Floor dug out under the bed: the bed is lost; the sleeper drops and lets go.
+	var bed2: String = bld.place(&"bed", Vector2i(25, 9), {&"dirt": 50.0}).data["id"]
+	g.apply_edit(Rect2i(15, 10, 2, 1), WorldGrid.Edit.DIG)
+	assert_true(bld.get_building(bed1).is_empty(), "bed lost")
+	assert_eq(n.bed_id, bed2, "ownership moved to the remaining bed")
+	assert_false(n._in_bed)
+	assert_eq(jobs.check_invariants(), [] as Array[String])
+	# Deconstructed bed: owner released too (no bed left -> alert later).
+	bld.remove(bed2)
+	assert_eq(n.bed_id, "")
+	assert_eq(jobs.check_invariants(), [] as Array[String])
+	# A table removed while someone eats at it: eats standing instead.
+	t = _at(12)
+	var m := col.spawn_npc(Vector2i(30, 9))
+	m.hunger = 30.0
+	var table: String = bld.place(&"table", Vector2i(36, 9), {&"rock": 50.0}).data["id"]
+	inv.spawn_ground(&"ration", 5.0, Vector2i(32, 9))
+	assert_true(_run(300, func() -> bool: return m._table_id == table))
+	bld.remove(table)
+	assert_eq(m._table_id, "")
+	assert_true(_run(300, func() -> bool: return m.hunger > 90.0), "still eats")
+	assert_eq(jobs.check_invariants(), [] as Array[String])
 
 
 func test_exhausted_sleeps_on_the_floor_by_day() -> void:
