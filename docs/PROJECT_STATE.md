@@ -1,14 +1,16 @@
 # PROJECT_STATE.md
 
-**Updated:** 2026-10-20 | **M0, M1:** Closed | **M2:** In review (handoff `docs/MILESTONE_HANDOFF.md`) | **Next authorized:** none
+**Updated:** 2026-10-21 | **M0–M2:** Closed | **M3:** In review (handoff `docs/MILESTONE_HANDOFF.md`) | **Next authorized:** none
 
 ## What exists (playable)
 - Main menu: up to 3 stored worlds, one played at a time; New World with name, random seed (re-roll), size.
 - Seeded finite world, chunk-streamed placeholder art, ladders.
 - 3 NPCs with Thai names who dig, haul to stockpiles and build walls/ladders from hauled material (ONI-style orders,
   priorities 1–9, per-NPC work toggles, Move here / Stop, unreachable orders shown).
-- Items with gravity and mass conservation; save v2 with M1 migration; manual save + autosave.
-- 279 tests (`tools/run_tests.ps1`), stress (`tools/run_stress.ps1`), benches (`tools/bench_*.gd`, `tools/qa_bench.gd`),
+- Items with gravity and mass conservation; manual save + autosave.
+- M3: build menu (door, crate, bed, table), rooms (bedroom/storage/dining), deconstruction (100 % refund), crates with
+  filters; save v3 (v2/v1 migrate). Art: owner AI images for 4 roles + terrain + ladder; the rest falls back to code art.
+- 438 tests (`tools/run_tests.ps1`), stress (`tools/run_stress.ps1`), benches (`tools/bench_*.gd`, `tools/qa_bench.gd`),
   Web smoke (`tools/web_smoke.mjs`, now kills its browser and refuses a busy debug port).
 
 ## Not yet

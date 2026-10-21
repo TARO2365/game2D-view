@@ -29,6 +29,8 @@ Status values: **APPROVED** (owner said yes), **DELEGATED** (owner asked Lead to
 | D-022 | 2026-10-20 | M3 module contracts per `docs/contracts/M3_CONTRACTS.md`. | DELEGATED | Lead |
 | D-023 | 2026-10-20 | Door placement: a door fills a 1-wide, 3-tall gap — solid tile above its top and floor below; **no** side-wall requirement (side view: the door connects the corridor left and right). Lead's brief was wrong; World Agent's interpretation adopted. Open sky = any tile with y < `surface_y[x]`. | DELEGATED | M3 World review |
 | D-024 | 2026-10-20 | `CrateStorage` keeps a duck-typed buildings provider (tests use a fake); contract otherwise unchanged. Save v3 load order: **buildings before designations**, then inventory, stockpiles, crates, orphan-crate rescue, colony, jobs; rooms rebuilt last. | DELEGATED | Lead |
+| D-025 | 2026-10-21 | NPC sprite cell widened to **128×192** (was 96×192): the owner's AI characters are ~94 px wide walking and wider when swinging a pickaxe. Feet bottom-centre pivot unchanged. Art import pipeline `tools/art_import.gd` (re-runnable); raw owner images stay git-ignored in `assets/incoming/`. | DELEGATED | Asset Agent, Lead review |
+| D-026 | 2026-10-21 | JobManager keeps **no mirror** of crate contents/capacity/filters; it calls the indexed `Inventory`/`CrateStorage` queries (single source of truth). Only a per-tick distance memo of crate positions is allowed. | DELEGATED | Lead (M3-QA-6 follow-up) |
 
 ## Rationale notes
 - **D-003 clearance 3:** concept sheet shows NPC ≈ 2.5 tiles and ordinary zombie ≈ 3 tiles. A 2-tile corridor

@@ -1,72 +1,66 @@
-# MILESTONE HANDOFF — M2: NPCs, movement, jobs, reservations, hauling (+ basic construction)
+# MILESTONE HANDOFF — M3: Buildings, doors, storage crates, rooms, deconstruction (+ Art V1)
 
-**Date:** 2026-10-20 | **Plan:** `docs/plans/M2_PLAN.md` (approved, D-017/D-018) | **Contracts:** `docs/contracts/M2_CONTRACTS.md`
-**Work split (D-008):** Lead (contracts, priorities/ladder orders, seed, Thai font, save v2 + migration, wiring, tooling),
-World Agent (ladder structure layer), Systems Agent (inventory, stockpiles, construction defs),
-Colony Agent (NPCs, navigation, jobs; two fix rounds), UI Agent (presentation), QA Agent (independent verification, 2 rounds).
-**Independent QA report:** `docs/qa/M2_QA_REPORT.md`.
+**Date:** 2026-10-21 | **Plan:** `docs/plans/M3_PLAN.md` (approved, D-021) | **Contracts:** `docs/contracts/M3_CONTRACTS.md`
+**Agents (D-008):** Lead (contracts, DECONSTRUCT orders, wiring, save v3, tooling), World (buildings, doors, rooms),
+Systems (crates, indexed queries), Colony (building orders, deconstruction, crate hauling, fixes), UI (build menu,
+placement, rooms overlay, crate panel), Asset (Art V1 spec, prompt pack, procedural art, AI batch 1 import), QA.
+**Independent QA report:** `docs/qa/M3_QA_REPORT.md` (+ fixes verified by QA repro tests and Lead runs).
 
-## 1. Acceptance criteria (plan §3)
-| # | Criterion | Result | Evidence |
-|---|---|---|---|
-| 1 | No job/item claimed twice | PASS | QA stress 5 seeds × 20 000 ticks, invariants every tick, 0 violations |
-| 2 | Orders executed by walking NPCs; terrain only via `apply_edit`; one drop per dug tile | PASS | QA accounting run: 0 unordered tile changes, exactly 50 kg per dug tile |
-| 3 | Items only move by carrying; kg conserved incl. save/load | PASS | conservation checked every tick; 51 random save/loads, 0 differences |
-| 4 | Deep sites reached via NPC-built ladders; unreachable shown | PASS | `tests/qa/test_qa_ladder_shaft.gd` (24 ladders, 2 save/loads mid-work) |
-| 5 | Move here / Stop job, no orphan reservations | PASS | random commands in all stress runs + unit tests |
-| 6 | Save/load mid-work; M1 saves migrate | PASS | comparator in stress; v1 save with 161 orders migrates, NPCs work them |
-| 7 | 100-NPC stress run, numbers reported | PASS (no target set) | §4 |
-| 8 | M0/M1 tests pass; Web smoke | PASS | 279/279; Web create → work → save → **real browser restart** → load (QA + Lead runs) |
+## 1. Acceptance (QA table, after the fix round)
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Buildings built only from hauled material, kg conserved | PASS |
+| 2 | Placement rules (door gap D-023, floors, overlaps) | PASS |
+| 3 | Rooms follow every edit; incremental = full rebuild | PASS |
+| 4 | Crates: filters, capacity, preferred over zones, never re-hauled | PASS (M3-QA-3 fixed) |
+| 5 | 100 % deconstruct refund | PASS (M3-QA-1 fixed: ladders refund their real material) |
+| 6 | Building loss drops everything, no leaked reservations | PASS (M3-QA-2 fixed) |
+| 7 | Save v3 mid-build/mid-deconstruct; v2/v1 migrate | PASS |
+| 8 | Placement preview = `order_building`; Priority/Cancel/Deconstruct on building orders | PASS (M3-QA-5 fixed) |
+| 9 | Performance with many crates/rooms | PASS after fix: QA base 100 NPCs/60 crates/2000 stacks **207 → 3.4 ms/tick** (max 1174 → 16 ms), Lead-measured same machine |
+| 10 | Web smoke with real browser restarts | PASS (QA: crate holds exactly 250 kg after 2 restarts) |
 
 ## 2. What was built
-- **NPCs:** 3 starting colonists, unique Thai names (bundled Noto Sans Thai), 3-tile body, walk/step/drop ≤ 4/ladder movement, gravity.
-- **Jobs (ONI-style):** dig, build wall, build ladder (materials hauled to the site), haul to stockpile; priorities 1–9;
-  per-NPC Dig/Build/Haul toggles; unreachable orders shown red; builders clear items off wall sites and step aside.
-- **Items:** inventory with conservation ledger; items fall when unsupported; stockpile zones with capacity bookings.
-- **UI:** NPC/item rendering, ladders, tools (Dig, Build wall, Ladder, Stockpile, Clear stockpile, Priority, Cancel),
-  NPC inspector (Move here, Stop, work toggles), random seed + re-roll (D-018). Debug: F9 instant edit, F10 spawn NPC.
-- **Save v2:** structures, inventory, stockpiles, colony, jobs; v1 (M1) saves migrate and get the starting colony.
+- **Buildings:** door (1×3, in a 1-wide gap), storage crate (2000 kg, material filter), bed, table — ordered via the
+  Build menu with green/red placement preview, built by NPCs from hauled material.
+- **Rooms:** enclosed areas ≤ 128 tiles, typed bedroom / storage / dining / room; overlay with R or "Rooms".
+- **Deconstruction tool:** walls, ladders, buildings (crates are emptied first); 100 % refund.
+- **Crates:** haulers prefer crates; building inspector shows contents and filter checkboxes.
+- **Art (D-020):** Path B code art, then **owner AI batch 1 in game**: 4 roles walk/dig, miner carry/climb, terrain
+  (dirt/rock/iron/gold/crystal, seamless), ladder. Missing art falls back sensibly. Prompt pack `docs/art/PROMPTS_V1.md`,
+  next list `docs/art/MISSING_V1.md`, import tool `tools/art_import.gd`.
+- **Save v3** (buildings, crates, building orders, ladder materials); rooms rebuilt on load; orphan-crate rescue.
 
-## 3. How to try it
-`tools/export.ps1 -Preset Web` + `node tools/serve_web.js` (or F5 in Godot) → New World → drag **Stockpile** on flat
-ground → **Dig** a pit → **Ladder** down a shaft → watch NPCs dig, haul and build at 3x. Click an NPC (Select tool) to inspect.
-
-## 4. Tests and measurements (all executed this session unless marked)
+## 3. Tests and measurements (executed)
 | Run | Result |
 |---|---|
-| `tools/run_tests.ps1` | **279/279 pass, 0 pending**, exit 0 (now also fails if any test script cannot load) |
-| `tools/run_stress.ps1` | 4/4 pass, no leak warnings |
-| QA long stress (`tools/qa_stress.gd`, 5 × 20 000 ticks) | 0 violations, 0 save/load differences, 0 stuck NPCs (QA round 2) |
-| `tools/bench_npcs.gd` (Medium, 100 NPCs) | avg 2.76 ms/tick, max 10.5 ms (final code) |
-| QA bench (100 NPCs, 60 unreachable orders / 2000 stacks) | max 14.2 / 34.2 ms (was 129 / 389 ms before fixes) |
-| Web (headless Edge, SwiftShader) | works; ~37–39 FPS; **first run in a fresh browser profile ran at 1–2 FPS** (shader compilation in software; second world in same profile 39 FPS) — OQ-20 |
-| Real-GPU FPS, 100 NPCs rendered, mobile/touch, Windows export of M2 | **NOT RUN** |
+| `tools/run_tests.ps1` | **438/438 pass, 0 pending** |
+| `tools/run_stress.ps1` | 7/7 pass (M2 + M3 stress), no leak warnings |
+| QA long M3 run (5 × 20 000 ticks, 53 save/loads) | 0 violations, rooms = full rebuild every check, 357 buildings built (pre-fix round; fixes re-verified by QA repro tests) |
+| `tools/qa_bench.gd` C (60 crates) | 3.4 ms/tick avg, 16 ms max (Lead, final code) |
+| Web | QA restarts PASS; Asset Agent AI-art screenshots `docs/handoffs/M3_evidence/ai_v1_*.png` |
+| Real GPU / mobile / Windows export of M3 | **NOT RUN** |
 
-## 5. Bugs found and fixed during M2
-QA-1 builder deadlock on items, QA-2 tick spikes, QA-3 mutual wall blocking, QA-4 haul pick-up/drop livelock,
-QA-5 "idle" while holding a job, QA-6 unreachable flicker, QA-8 haul booking unreachable stockpile, QA-9 items on
-ladders floating, floating items after digging (UI Agent), transparent inspector, QA-11 Web smoke tool reused stale
-browsers, test runner ignoring unloadable test scripts. Fixes for QA-8/QA-9 were verified by QA's own repro tests and
-Lead test runs, not by a separate QA round.
+## 4. Bugs found and fixed in M3
+M3-QA-1 ladder refund material, M3-QA-2 stale deconstruct index, M3-QA-3 filter change mid-haul, M3-QA-4 "no material"
+shown as unreachable, M3-QA-5 stale placement preview, **M3-QA-6 crate query performance (major)**, terrain shader
+darkening all tiles (Asset), Web smoke tool leaving Edge running, Godot importing `build/`. JobManager crate mirror
+removed (D-026). The final fixes were verified by QA's repro tests + Lead runs, not by a separate QA round.
 
-**Process notes:** the Colony Agent corrected one fixture tile in a QA-owned test (`test_qa_fixes.gd`, QA-8): the
-original "reachable" zone tile was behind a 4-tall pillar and could never be reached; the assertion is unchanged.
-The M1 handoff's "browser restart" evidence may have been a page reload (QA-11) — correction note added there.
+## 5. Open / known
+- OQ-22: NPCs idle on a ladder while a nearby dig shows unreachable (seen once in an F9-instant-edit setup) — investigate next QA round.
+- OQ-23: seed typed in the dialog not reproducing the world in one smoke run — tests pass; verify manually.
+- OQ-20 first-launch Web shader stutter; OQ-17 Thai UI translation; OQ-19 touch untested.
+- Art still missing (MISSING_V1.md): dug backwall, sky, bedrock, concrete, idle, other roles' carry/climb, buildings, items, icons.
 
-## 6. Known limitations
-- NPCs who dig themselves into a pit without ladders stay there until the player orders ladders (ONI-like, by design).
-- Unreachable-stockpile memory is not saved: one wasted trip per load. Long paths > 4000 expansions count as unreachable.
-- QA-12: with the bench's pit, more NPCs end up confined (real confinement, not a defect).
-- UI English except NPC names (OQ-17); touch untested (OQ-19); layout checked at 1280×720 only.
+## 6. Save compatibility
+`save_version 3`; v2 and v1 saves migrate (tested). `GEN_VERSION` 1 unchanged.
 
-## 7. Save compatibility
-`save_version 2`. M1 (v1) saves load via migration (tested). `GEN_VERSION` unchanged (1).
+## 7. Git
+All merged to `main`, pushed to https://github.com/TARO2365/game2D-view.
 
-## 8. Git
-All work merged to `main` and pushed to https://github.com/TARO2365/game2D-view (see `git log`).
+## 8. Next
+Owner review → close M3, authorize M4 (needs, food, power, water, room oxygen). Art batch 2 can arrive any time.
 
-## 9. Out of scope / deferred
-Needs, schedules, skills, rooms, storage buildings, doors, deconstruction, combat, real art, Thai UI translation.
-
-## 10. Status
+## 9. Status
 **STATUS: AWAITING OWNER REVIEW / APPROVAL**
