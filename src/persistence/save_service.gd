@@ -12,8 +12,10 @@ enum Kind { MANUAL, AUTO }
 ## v2 (M2): chunk bytes hold tiles + structures; adds inventory, stockpiles,
 ## colony, jobs. v3 (M3): adds buildings and crates (rooms are rebuilt, not
 ## saved). Older saves are migrated on load (see session_from_payload).
-const SAVE_VERSION := 3
-const SUPPORTED_VERSIONS := [1, 2, 3]
+## v4 (M4a): adds farming and kitchens; colony/jobs carry needs, schedules
+## and food jobs (their own snapshots handle older formats).
+const SAVE_VERSION := 4
+const SUPPORTED_VERSIONS := [1, 2, 3, 4]
 const MAGIC := "LAST_BUNKER_SAVE"
 const FILE_NAMES := {Kind.MANUAL: "manual.save", Kind.AUTO: "autosave.save"}
 const BAK_SUFFIX := ".bak"
@@ -50,6 +52,8 @@ static func build_payload(session: WorldSession) -> Dictionary:
 		"buildings": session.buildings.to_snapshot(),
 		"crates": session.crates.to_snapshot(),
 		"build_orders": session.build_orders.to_snapshot(),
+		"farming": session.farming.to_snapshot(),
+		"kitchens": session.kitchens.to_snapshot(),
 		"inventory": session.inventory.to_snapshot(),
 		"stockpiles": session.stockpiles.to_snapshot(),
 		"colony": session.colony.to_snapshot(),
@@ -176,6 +180,8 @@ static func session_from_payload(p: Dictionary, meta: Dictionary, registry: Tile
 	dropped["crates"] = s.crates.load_snapshot(p.get("crates", {})) if version >= 3 else 0
 	dropped["orphan_crate_items"] = _rescue_orphan_crate_items(s)
 	dropped["build_orders"] = s.build_orders.load_snapshot(p.get("build_orders", {})) if version >= 3 else 0
+	dropped["farming"] = s.farming.load_snapshot(p.get("farming", {})) if version >= 4 else 0
+	dropped["kitchens"] = s.kitchens.load_snapshot(p.get("kitchens", {})) if version >= 4 else 0
 	dropped["colony"] = s.colony.load_snapshot(p.get("colony", {})) if version >= 2 else 0
 	if version == 1:
 		s.colony.spawn_starting_npcs()  # M1 worlds had no NPCs

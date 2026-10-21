@@ -127,7 +127,8 @@ func test_ground_items_render_as_pile() -> void:
 	session.inventory.spawn_ground(&"iron_ore", 50.0, t + Vector2i.LEFT)
 	await wait_process_frames(1)
 	var piles := game.item_view.visible_piles()
-	assert_eq(piles.size(), 2)
+	# Lead (M4a): the starting ration stack may also be visible, so check our two piles by tile.
+	assert_true(piles.has(t + Vector2i.LEFT))
 	assert_eq((piles[t] as Array).size(), 2)
 	var far := Vector2i(2, session.grid.height - 3)
 	session.inventory.spawn_ground(&"rock", 50.0, far)
