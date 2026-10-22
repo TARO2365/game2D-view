@@ -8,6 +8,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 
 const [stepsFile, outDir, profileArg] = process.argv.slice(2);
 if (!stepsFile || !outDir) { console.error("usage: web_smoke.mjs steps.json outdir [profile]"); process.exit(2); }
@@ -15,7 +16,12 @@ const steps = JSON.parse(readFileSync(stepsFile, "utf8"));
 const profile = resolve(profileArg || join(tmpdir(), "lb_web_profile"));
 mkdirSync(outDir, { recursive: true });
 const url = process.env.LB_URL || "http://localhost:8060/";
-const port = 9333;
+// A free debug port per run (LB_DEBUG_PORT overrides), so concurrent runs by
+// different agents can never attach to each other's browser (M4a QA).
+const port = Number(process.env.LB_DEBUG_PORT) || await new Promise((res) => {
+  const srv = createServer();
+  srv.listen(0, "127.0.0.1", () => { const p = srv.address().port; srv.close(() => res(p)); });
+});
 const browsers = [
   "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
   "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
