@@ -3,24 +3,25 @@
 Godot 4.7.2 / GDScript 2D underground colony sim. Owner communicates in Thai;
 reports to the owner are in Thai, code/identifiers/tech docs in English.
 
-## Start of every session (mandatory)
-1. Read **`PROGRESS.md`** first (one-page summary: done, open issues, next step).
-2. Read `PROJECT_MASTER_SPEC.md` (authoritative design; never edit without owner approval).
-3. Read `docs/PROJECT_STATE.md` and the latest handoff (`docs/MILESTONE_HANDOFF.md`; older ones in `docs/handoffs/`).
-4. Check `docs/ROADMAP.md` for which milestone is **authorized**. Only work inside it. Plans live in `docs/plans/`,
-   module contracts in `docs/contracts/` (latest: `M4A_CONTRACTS.md`).
-5. Check `docs/DECISIONS.md` and `docs/OPEN_QUESTIONS.md` before assuming anything.
-6. Run `powershell -File tools/run_tests.ps1` to confirm a green baseline before changing anything.
+## Session start (keep it cheap — tokens matter)
+Read **only `PROGRESS.md`** at session start. Open other docs **only when the task needs them**, and only the relevant part
+(use Grep / read a section, not whole files):
+| Need | Open |
+|---|---|
+| Planning a new milestone | the matching section of `PROJECT_MASTER_SPEC.md` (§13 roadmap + that topic) and `docs/plans/` of the previous milestone as a template |
+| Editing a module | its contract in `docs/contracts/` (latest `M4A_CONTRACTS.md`) — grep the class/section |
+| "Was X decided?" | grep `docs/DECISIONS.md` / `docs/OPEN_QUESTIONS.md` for the keyword |
+| Details of a past milestone | `docs/handoffs/` (M0–M3) or `docs/MILESTONE_HANDOFF.md` (M4a) |
+Run `tools/run_tests.ps1` only before/after code changes (filter its output), not for status questions.
 
-## Working practice (learned M0–M4a)
-- Per milestone: owner approves → Lead writes plan → owner approves plan → Lead writes contracts → specialist agents in
-  **separate worktrees** (no shared files) → Lead reviews diff + merges + runs tests itself → independent QA round →
-  fix round → handoff. Report to the owner in Thai; end with STATUS: AWAITING OWNER REVIEW / APPROVAL.
-- Never trust an agent's numbers without re-running tests/benches on main yourself.
-- Agents hit usage limits often: resume them with a message instead of restarting; ask them to commit in parts.
-- The owner's AI images often land in `C:\Users\Taro1123\Documents\ChatGPT\asset ai\assets\incoming` — copy new files to
-  `assets/incoming/` (git-ignored), then run `tools/art_import.gd`. Never commit raw images.
-- A `node` process from `.cache\codex-runtimes` belongs to the owner's Codex — never kill it.
+## Working practice
+- Milestone flow: owner OK → plan → owner OK → contracts → role agents in separate worktrees → Lead merges and re-runs
+  tests itself → QA round → fixes → handoff (Thai report, ends "STATUS: AWAITING OWNER REVIEW / APPROVAL").
+- Token economy: give agents short briefs that point to files (they read them), don't paste docs; ask for short reports.
+- Agents often hit usage limits: resume them with a message, ask them to commit in parts.
+- Owner AI images usually land in `C:\Users\Taro1123\Documents\ChatGPT\asset ai\assets\incoming` → copy to
+  `assets/incoming/` (git-ignored) → `tools/art_import.gd`. Never commit raw images.
+- A `node` process under `.cache\codex-runtimes` is the owner's Codex — never kill it.
 
 ## Hard rules
 - Never start, or implement features of, a milestone the owner has not authorized.
