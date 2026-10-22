@@ -9,7 +9,7 @@ No milestone may move to Authorized without explicit owner approval.
 | M1 | Tiles, finite seeded world, chunks, camera, basic dig/build **+ basic save/load (D-007, D-014)** | **Closed** (owner approved 2026-10-20) |
 | M2 | NPC movement, job queue, reservations, hauling | **Closed** (owner approved 2026-10-20) |
 | M3 | Rooms, storage, construction (basic ladder/wall construction already delivered in M2, D-017) | **Closed** (owner approved 2026-10-21) |
-| M4 | Basic needs, food, power, water, room oxygen | **M4a In review** 2026-10-22 (handoff `docs/MILESTONE_HANDOFF.md`); M4b planned, separate approval |
+| M4 | Basic needs, food, power, water, room oxygen | **M4a Closed** (owner approved 2026-10-22); M4b not started — plan pending owner request |
 | M5 | Surface zombies, entry damage, doors, basic turret, horde | Not started |
 | M6 | NPC-driven vehicles, garage, digging/exploration | Not started |
 | M7 | Caves, bunkers, underground creatures, tunnel stability | Not started |
