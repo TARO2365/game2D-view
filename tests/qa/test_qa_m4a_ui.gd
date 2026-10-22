@@ -13,13 +13,10 @@ func before_all() -> void:
 	reg = TileRegistry.load_default()
 
 
-## BUG M4A-QA-4: confirmed failing without pending() on 2026-10-22: ration,
+## BUG M4A-QA-4 (fixed by the Asset Agent 2026-10-22; was confirmed failing): ration,
 ## meal and mushroom stacks draw in Color.MAGENTA (ItemView only knows tile
 ## materials) — seen on Web: the starting ration is a magenta chunk.
 func test_food_items_have_art_not_magenta() -> void:
-	pending("BUG M4A-QA-4: food stacks (ration, meal, mushroom) render magenta on the ground and when carried")
-	return
-	@warning_ignore("unreachable_code")
 	var mats := MaterialDefs.load_default()
 	var ids := StableIdAllocator.new()
 	var v := ItemView.new()

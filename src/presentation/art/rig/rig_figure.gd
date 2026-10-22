@@ -37,7 +37,7 @@ func setup(d: RigDef) -> void:
 			node = pick
 		elif name == &"carry":
 			_carry = ProcFigure.Part.new()
-			_carry.painter = func(ci: ProcFigure.Part) -> void: ProcFigure.draw_chunk(ci, Vector2.ZERO, 14.0, ci.tint, 7)
+			_carry.painter = func(ci: ProcFigure.Part) -> void: ItemArt.draw(ci, ci.item, Vector2.ZERO, 14.0, ci.tint, 7)
 			node = _carry
 		if node:
 			node.name = String(name)
@@ -58,6 +58,11 @@ func setup(d: RigDef) -> void:
 		if not progressed:
 			break
 	apply(&"idle", 0.0, false, ProcFigure.NO_CARRY)
+
+
+func set_carry_item(material: StringName) -> void:
+	if _carry:
+		_carry.item = material
 
 
 ## Poses the rig: anim at phase (0..1), eyes closed when blink, carried
