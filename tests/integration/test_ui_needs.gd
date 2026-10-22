@@ -304,3 +304,39 @@ func _assert_disjoint(rects: Dictionary, vp: Rect2) -> void:
 		for j in range(i + 1, names.size()):
 			var rb: Rect2 = rects[names[j]]
 			assert_false(ra.intersects(rb), "%s %s overlaps %s %s" % [names[i], ra, names[j], rb])
+
+
+## Tick of a time of day on Day 1 (worlds start at 06:00).
+static func _tick_at(hour: float) -> int:
+	var h := hour if hour >= GameTime.START_HOUR else hour + 24.0
+	return int(round((h - GameTime.START_HOUR) * GameTime.TICKS_PER_HOUR))
+
+
+## M4A-QA-5: the world darkens at night, smoothly, and the HUD does not.
+func test_day_night_tint() -> void:
+	assert_true(game.day_tint is CanvasModulate)
+	var noon := GameScreen.tint_for_tick(_tick_at(12.0))
+	var midnight := GameScreen.tint_for_tick(_tick_at(0.0))
+	assert_eq(noon, Color(1, 1, 1), "no tint at noon")
+	assert_ne(noon, midnight)
+	assert_lt(midnight.v, noon.v, "darker at night")
+	assert_gt(midnight.v, 0.5, "night stays readable")
+	# Smooth across dusk 18:00-20:00: many distinct steps, none large.
+	var prev := GameScreen.tint_for_tick(_tick_at(18.0))
+	var distinct := 0
+	for m in range(10, 121, 10):
+		var c := GameScreen.tint_for_tick(_tick_at(18.0 + m / 60.0))
+		var step := absf(c.r - prev.r) + absf(c.g - prev.g) + absf(c.b - prev.b)
+		assert_lt(step, 0.2, "smooth at 18:00 + %d min" % m)
+		if step > 0.0001:
+			distinct += 1
+		prev = c
+	assert_eq(distinct, 12, "changes at every sample across dusk")
+	assert_eq(prev, GameScreen.TINT_NIGHT, "fully night at 20:00")
+	assert_eq(GameScreen.tint_for_tick(_tick_at(7.0)), Color(1, 1, 1), "day again after dawn")
+	assert_eq(GameScreen.tint_for_tick(_tick_at(12.0) + GameTime.TICKS_PER_DAY), noon, "repeats daily")
+	# Applied to the world canvas each frame; HUD panels live on CanvasLayers.
+	session.clock.tick_index = _tick_at(0.0)
+	await wait_process_frames(1)
+	assert_eq(game.day_tint.color, midnight)
+	assert_true(game.alerts_panel.get_parent() is CanvasLayer, "HUD not tinted")

@@ -16,6 +16,15 @@ const INSPECTOR_TOP := 200.0
 const DEBUG_HUD_WIDTH := 340.0
 const DEBUG_HUD_HEIGHT := 84.0
 const SCHEDULE_POS := Vector2(372, 352)
+## Day/night tint keyframes [hour, colour], piecewise linear over the day
+## (dusk 18–20, night 20–05, dawn 05–07). Night stays light enough to read
+## underground (one global tint, no per-depth cost). PLACEHOLDER colours.
+const TINT_DAY := Color(1, 1, 1)
+const TINT_NIGHT := Color(0.52, 0.56, 0.8)
+const TINT_KEYS := [
+	[0.0, TINT_NIGHT], [5.0, TINT_NIGHT], [6.0, Color(0.95, 0.82, 0.78)], [7.0, TINT_DAY],
+	[18.0, TINT_DAY], [19.0, Color(1.0, 0.8, 0.68)], [20.0, TINT_NIGHT], [24.0, TINT_NIGHT],
+]
 
 var session: WorldSession
 var slots: WorldSlots
@@ -41,6 +50,8 @@ var overview: ColonyOverview
 var schedule_editor: ScheduleEditor
 var debug_hud: Label
 var toast: Label
+## Day/night tint of the world canvas (M4A-QA-5). HUD CanvasLayers are not affected.
+var day_tint: CanvasModulate
 
 var last_tick_ms := 0.0
 var autosave_left := AUTOSAVE_INTERVAL_SEC
@@ -103,6 +114,10 @@ func _ready() -> void:
 	camera.setup(Vector2(session.grid.get_size() * px))
 	add_child(camera)
 	camera.make_current()
+	day_tint = CanvasModulate.new()
+	day_tint.name = "DayNightTint"
+	day_tint.color = tint_for_tick(session.clock.tick_index)
+	add_child(day_tint)
 	var mid := session.grid.width / 2
 	camera.position = CameraController.clamp_center(
 			Vector2(mid * px, session.grid.surface_y[mid] * px), camera.view_size_world(), camera.world_size_px)
@@ -246,7 +261,23 @@ func _process(delta: float) -> void:
 		_toast_left -= delta
 		if _toast_left <= 0.0:
 			toast.text = ""
+	day_tint.color = tint_for_tick(session.clock.tick_index)
 	_update_hud()
+
+
+## World tint for a simulation tick (pure; uses GameTime's day offset).
+static func tint_for_tick(tick: int) -> Color:
+	var in_day := posmod(tick + GameTime.START_OFFSET, GameTime.TICKS_PER_DAY)
+	var h := float(in_day) / GameTime.TICKS_PER_HOUR
+	for i in range(1, TINT_KEYS.size()):
+		var b: Array = TINT_KEYS[i]
+		var hb: float = b[0]
+		if h <= hb:
+			var a: Array = TINT_KEYS[i - 1]
+			var ha: float = a[0]
+			var t: float = (h - ha) / maxf(0.0001, hb - ha)
+			return (a[1] as Color).lerp(b[1] as Color, clampf(t, 0.0, 1.0))
+	return TINT_NIGHT
 
 
 func set_tool(t: int) -> void:
