@@ -143,7 +143,7 @@ The procedural fallback uses the same roles, chosen per NPC id (cosmetic only, n
 ## 7. Items and buildings
 | File | Size | Notes |
 |---|---|---|
-| `items/item_dirt.png`, `item_rock.png`, `item_iron_ore.png`, `item_gold_ore.png`, `item_crystal.png` | 64 × 64 | one small pile/chunk centred, touching the bottom edge, about 40 × 32 px of content. Drawn at 0.3 tile in the world and reused as UI icons |
+| `items/item_dirt.png`, `item_rock.png`, `item_iron_ore.png`, `item_gold_ore.png`, `item_crystal.png`, food (M4a): `item_mushroom.png`, `item_meal.png`, `item_ration.png` | 64 × 64 | one small pile/chunk centred, touching the bottom edge, about 40 × 32 px of content. Drawn at 0.3 tile in the world and reused as UI icons |
 | `buildings/building_door.png` | 64 × 192 (1 × 3 tiles) | metal bunker door, closed, frame included |
 | `buildings/building_crate.png` | 64 × 64 | wooden storage crate (see 04 scale comparison) |
 | `buildings/building_bed.png` | 128 × 64 (2 × 1) | simple bunk/cot, blanket, pillow on the left |

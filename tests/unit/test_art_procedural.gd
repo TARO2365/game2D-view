@@ -172,4 +172,15 @@ func test_looks_stable_and_roles_spread() -> void:
 func test_material_art_color_falls_back() -> void:
 	assert_eq(NpcView.material_art_color(reg, &"gold_ore"), ArtPalette.GOLD)
 	assert_eq(NpcView.material_art_color(reg, &"bedrock"), reg.get_def(TileRegistry.BEDROCK).placeholder_color)
-	assert_eq(NpcView.material_art_color(reg, &"no_such"), Color.MAGENTA)
+	assert_eq(NpcView.material_art_color(reg, &"no_such"), ItemArt.UNKNOWN, "never magenta")
+
+
+func test_every_material_def_has_colour_and_art() -> void:
+	var mats := MaterialDefs.load_default()
+	assert_gt(mats.all_keys().size(), 0)
+	for k in mats.all_keys():
+		var c := NpcView.material_art_color(reg, k)
+		assert_ne(c, Color.MAGENTA, "%s colour" % k)
+	for food in [&"mushroom", &"meal", &"ration"]:
+		assert_eq(NpcView.material_art_color(reg, food), mats.get_def(food).color, "%s from MaterialDefs" % food)
+		assert_eq(ArtLibrary.item_path(food), "items/item_%s.png" % food)

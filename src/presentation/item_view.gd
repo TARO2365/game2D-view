@@ -1,7 +1,7 @@
 class_name ItemView
 extends Node2D
-## Ground items at the bottom of their tile: one rock/ore chunk per stack
-## (production icon from ArtLibrary when present, else a procedural chunk),
+## Ground items at the bottom of their tile: one item per stack (production
+## icon from ArtLibrary when present, else ItemArt: chunks, food shapes),
 ## several stacks on one tile form a small pile. Visible area only; redrawn
 ## when Inventory reports a change.
 
@@ -24,9 +24,18 @@ func setup(inv: Inventory, reg: TileRegistry, px: int) -> void:
 	inventory = inv
 	registry = reg
 	tile_px = px
+	# Every item material (MaterialDefs: soil, ore, food) plus tile keys.
+	var keys: Array[StringName] = []
 	for d in reg.all_defs():
-		_colors[d.key] = NpcView.material_art_color(reg, d.key)
-		_icons[d.key] = ArtLibrary.item_texture(d.key)
+		keys.append(d.key)
+	var mats := ItemArt.materials()
+	if mats:
+		for k in mats.all_keys():
+			if not k in keys:
+				keys.append(k)
+	for k in keys:
+		_colors[k] = NpcView.material_art_color(reg, k)
+		_icons[k] = ArtLibrary.item_texture(k)
 	inventory.items_changed.connect(func(_id: String) -> void: _dirty = true)
 
 
@@ -70,7 +79,8 @@ func _draw() -> void:
 				draw_texture_rect(icon, Rect2(bottom - Vector2(s / 2.0, s), Vector2(s, s)), false)
 				continue
 			var c := bottom - Vector2(0, s * 0.42)
-			ProcFigure.draw_chunk(self, c, s * 0.5, _colors.get(it.material, Color.MAGENTA), t.x * 31 + t.y * 17 + i)
+			var col: Color = _colors.get(it.material, ItemArt.color_for(registry, it.material))
+			ItemArt.draw(self, it.material, c, s * 0.5, col, t.x * 31 + t.y * 17 + i)
 			if SPARKLE.has(it.material):
 				var sp := c + Vector2(s * 0.12, -s * 0.12)
 				draw_line(sp - Vector2(s * 0.14, 0), sp + Vector2(s * 0.14, 0), Color(1, 1, 0.9, 0.9), 1.5)

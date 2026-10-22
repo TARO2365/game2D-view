@@ -119,7 +119,7 @@ func _ready() -> void:
 	_sprite.offset = Vector2(-ArtLibrary.NPC_CELL.x / 2.0, -ArtLibrary.NPC_CELL.y)
 	_sheet_root.add_child(_sprite)
 	_sheet_carry = ProcFigure.Part.new()
-	_sheet_carry.painter = func(ci: ProcFigure.Part) -> void: ProcFigure.draw_chunk(ci, ArtLibrary.SHEET_CARRY_AT, 14.0, ci.tint, 7)
+	_sheet_carry.painter = func(ci: ProcFigure.Part) -> void: ItemArt.draw(ci, ci.item, ArtLibrary.SHEET_CARRY_AT, 14.0, ci.tint, 7)
 	_sheet_root.add_child(_sheet_carry)
 	var ov := ProcFigure.Part.new()
 	ov.name = "Overlay"
@@ -217,6 +217,8 @@ func sync(delta: float = 0.0) -> void:
 	var vertical := npc.prev_tile.x == npc.tile.x and npc.prev_tile.y != npc.tile.y
 	_anim = anim_for(npc.state, npc.is_moving(), vertical, carried != null)
 	_carry_color = material_art_color(registry, material) if carried else ProcFigure.NO_CARRY
+	if carried:
+		_set_carry_item(material)
 	if _skel:
 		_sync_skeleton()
 	else:
@@ -242,6 +244,13 @@ func _sync_skeleton() -> void:
 	var blink := fposmod(_idle_time, IDLE_BLINK_PERIOD) > IDLE_BLINK_PERIOD - 0.15
 	_frame = floori(fposmod(phase, 1.0) * 4.0)
 	_skel.apply(_anim, phase, blink, _carry_color)
+
+
+func _set_carry_item(material: StringName) -> void:
+	(_parts[&"carry"] as ProcFigure.Part).item = material
+	_sheet_carry.item = material
+	if _skel:
+		_skel.set_carry_item(material)
 
 
 ## True when this NPC is drawn by the skeletal rig.
@@ -445,17 +454,8 @@ static func material_color(reg: TileRegistry, material: StringName) -> Color:
 	return Color.MAGENTA
 
 
-## Art colour of a material chunk (palette), falling back to material_color.
+## Art colour of an item material: palette, then MaterialDefs, then tile
+## defs; never magenta (M4A-QA-4).
 static func material_art_color(reg: TileRegistry, material: StringName) -> Color:
-	match material:
-		&"dirt":
-			return ArtPalette.DIRT_LIGHT
-		&"rock":
-			return ArtPalette.ROCK_LIGHT
-		&"iron_ore":
-			return ArtPalette.IRON
-		&"gold_ore":
-			return ArtPalette.GOLD
-		&"crystal":
-			return ArtPalette.CRYSTAL
-	return material_color(reg, material)
+	return ItemArt.color_for(reg, material)
+

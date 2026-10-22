@@ -182,6 +182,9 @@ Negative: [NEG]
 | `item_iron_ore` | chunk of grey rock with blue faceted iron crystals |
 | `item_gold_ore` | chunk of brown rock with shiny gold nuggets and a sparkle |
 | `item_crystal` | cluster of glowing violet crystal shards on a dark rock base |
+| `item_mushroom` | two plump cave mushrooms with red-brown caps and cream spots, short pale stems (M4a food) |
+| `item_meal` | a cream ceramic bowl of hot stew with vegetables, a little steam (M4a food) |
+| `item_ration` | a dented olive-green military ration tin with a light label band (M4a food) |
 
 ---
 

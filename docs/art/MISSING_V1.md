@@ -23,7 +23,8 @@ Imported so far (`tools/art_import.gd`):
 |---|---|---|---|
 | 1 | `icon_build_menu`, `icon_deconstruct`, `icon_rooms` | PROMPTS_V1 §7 | text-only buttons |
 | 2 | `building_farm_plot`, `building_kitchen` (M4a, 2×1 tiles each) | PROMPTS_V1 §6 table (rows added) | code-drawn soil bed / stove |
-| 3 | rig parts sheets (miner first) | PROMPTS_V2_RIG §1 | pilot rig cut from the idle sheet |
+| 3 | `item_mushroom`, `item_meal`, `item_ration` (M4a food) | PROMPTS_V1 §5 table (rows added) | code-drawn cap / bowl / tin |
+| 4 | rig parts sheets (miner first) | PROMPTS_V2_RIG §1 | pilot rig cut from the idle sheet |
 
 ## Notes from batch 2
 - Some idle sheets are drawn bigger than the walk sheets. The importer rescales them by head width, but miner

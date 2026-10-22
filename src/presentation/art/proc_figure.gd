@@ -38,6 +38,12 @@ class Part extends Node2D:
 			if v != tint:
 				tint = v
 				queue_redraw()
+	## Material key of a carried item (ItemArt shape), "" = rock chunk.
+	var item: StringName = &"":
+		set(v):
+			if v != item:
+				item = v
+				queue_redraw()
 
 	func _draw() -> void:
 		painter.call(self)
@@ -124,7 +130,7 @@ static func build(root: Node2D, look: Dictionary) -> Dictionary:
 	var parts := {}
 	for part_name in [&"shadow", &"arm_b", &"leg_b", &"leg_f", &"torso", &"head"]:
 		parts[part_name] = _part(root, painter(part_name, look))
-	parts[&"carry"] = _part(root, func(ci: Part) -> void: draw_chunk(ci, CARRY_AT, 13.0, ci.tint, 7))
+	parts[&"carry"] = _part(root, func(ci: Part) -> void: ItemArt.draw(ci, ci.item, CARRY_AT, 13.0, ci.tint, 7))
 	parts[&"arm_f"] = _part(root, painter(&"arm_f", look))
 	var pick := _part(parts[&"arm_f"], painter(&"pickaxe", look))
 	pick.show_behind_parent = true
