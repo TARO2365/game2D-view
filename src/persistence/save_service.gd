@@ -187,6 +187,9 @@ static func session_from_payload(p: Dictionary, meta: Dictionary, registry: Tile
 		s.colony.spawn_starting_npcs()  # M1 worlds had no NPCs
 	dropped["jobs"] = s.jobs.load_snapshot(p.get("jobs", {}) if version >= 2 else {})
 	s.rooms.rebuild_all()
+	# Alerts are derived (not saved): recompute once everything is loaded,
+	# including colony-wide ones that depend on rooms/food (M4A-QA-6).
+	s.colony.refresh_alerts()
 	return CommandResult.success({"session": s, "dropped": dropped, "migrated_from": version})
 
 
