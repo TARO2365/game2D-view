@@ -101,9 +101,6 @@ func test_death_drops_items_releases_everything_and_alert_stays() -> void:
 ## BUG M4A-QA-1: confirmed failing without pending() on 2026-10-22: after
 ## save/load the "npc:1/died" alert is gone (the deaths counter survives).
 func test_death_alert_survives_load() -> void:
-	pending("BUG M4A-QA-1: the 'has died' alert disappears after save/load (alerts are not saved, nobody re-raises it)")
-	return
-	@warning_ignore("unreachable_code")
 	var a := s.colony.spawn_npc(Vector2i(10, 9))
 	a.hunger = 0.0
 	a.health = 0.5
@@ -198,9 +195,6 @@ func test_preempt_while_cooking() -> void:
 ## NPC keeps _food_item (now an unreserved ground stack) and goes on "eating"
 ## with empty hands (check_invariants: "meal item ... not reserved for it").
 func test_stop_while_carrying_meal_leaves_no_dangling_food() -> void:
-	pending("BUG M4A-QA-3: 'Stop' while an NPC carries its meal drops the meal but leaves a dangling food link")
-	return
-	@warning_ignore("unreachable_code")
 	var n := s.colony.spawn_npc(Vector2i(6, 9))
 	s.inventory.spawn_ground(&"meal", 4.0, Vector2i(10, 9))
 	n.hunger = 20.0
@@ -233,9 +227,6 @@ func test_game_time_boundaries() -> void:
 ## BUG M4A-QA-2: confirmed failing without pending() on 2026-10-22: asleep
 ## (exhausted, stamina < 15) at 21:58 on day 1 after waking at 06:00 with 100.
 func test_default_schedule_reaches_bedtime_without_exhaustion() -> void:
-	pending("BUG M4A-QA-2: on the default schedule a rested NPC is exhausted at 19:36 every day (stamina rate vs 16 h work day)")
-	return
-	@warning_ignore("unreachable_code")
 	var n := s.colony.spawn_npc(Vector2i(6, 9))
 	s.inventory.spawn_ground(&"ration", 20.0, Vector2i(8, 9))
 	s.buildings.place(&"bed", Vector2i(12, 9), {&"dirt": 50.0})

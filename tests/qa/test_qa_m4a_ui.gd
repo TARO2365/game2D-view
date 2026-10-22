@@ -53,9 +53,6 @@ func test_sleeping_and_collapsed_npcs_lie_down() -> void:
 ## BUG M4A-QA-6: confirmed failing without pending() on 2026-10-22 (also on
 ## Web: "No alerts" after restart+load of a paused game that had 4 alerts).
 func test_alerts_present_right_after_loading_a_paused_game() -> void:
-	pending("BUG M4A-QA-6: after loading (paused) the alerts panel is empty until the first tick")
-	return
-	@warning_ignore("unreachable_code")
 	var e: Variant = ENV.new(reg)
 	var a: Npc = e.ses.colony.spawn_npc(Vector2i(10, 9))
 	a.hunger = 0.0
