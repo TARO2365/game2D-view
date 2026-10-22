@@ -22,7 +22,9 @@ const NO_TILE := Vector2i(-1, -1)
 
 # --- M4a needs (all PLACEHOLDER, D-028 / M4a contract §7) ---------------
 const HUNGER_PER_TICK := 100.0 / GameTime.TICKS_PER_DAY            # -100 / day
-const STAMINA_AWAKE_PER_TICK := 100.0 / (16 * GameTime.TICKS_PER_HOUR)  # -100 / 16 h awake
+## -100 per 20 h awake (M4A-QA-2): the default 16 h day (06-22) ends at
+## stamina 20, tired but above EXHAUSTED; 8 h in a bed (+133) refills it.
+const STAMINA_AWAKE_PER_TICK := 100.0 / (20 * GameTime.TICKS_PER_HOUR)
 const STAMINA_BED_PER_TICK := 100.0 / (6 * GameTime.TICKS_PER_HOUR)    # +100 / 6 h in bed
 const BEDROOM_FACTOR := 1.5                                          # +50 % in a bedroom
 const FLOOR_FACTOR := 0.5                                            # x0.5 on the floor
@@ -62,6 +64,10 @@ var _rotation: int = 0
 var _table_users: Dictionary = {}  # table building id -> npc id eating there
 var _sleep_factor: Dictionary = {} # npc id -> stamina factor while asleep (bed / bedroom / floor)
 var _deaths: int = 0
+## Recent deaths [{id, nickname, tile}] (saved): their "died" alerts are
+## re-raised after a load (M4A-QA-1). Bounded to RECENT_DEATHS_KEPT.
+var _recent_deaths: Array = []
+const RECENT_DEATHS_KEPT := 20
 
 
 func _init(world_grid: WorldGrid, nav_grid: NavGrid, job_manager: JobManager,
@@ -633,10 +639,12 @@ func _die(n: Npc) -> void:
 	n.bed_id = ""
 	_npcs.erase(n.id)
 	_deaths += 1
+	_recent_deaths.append({"id": n.id, "nickname": n.nickname, "tile": n.tile})
+	if _recent_deaths.size() > RECENT_DEATHS_KEPT:
+		_recent_deaths.pop_front()
 	if alerts != null:
 		alerts.clear_prefix(n.id + "/")
-		alerts.set_alert(n.id + "/died", AlertService.Severity.EMERGENCY,
-				"%s has died" % n.nickname, n.tile, n.id)
+		_raise_died(_recent_deaths[_recent_deaths.size() - 1])
 	jobs.on_npcs_changed()
 	jobs.sync_feed_jobs()
 	npcs_changed.emit()
@@ -645,9 +653,9 @@ func _die(n: Npc) -> void:
 ## Stops eating / sleeping: drops a carried meal where the NPC stands,
 ## releases a reserved one and the table.
 func _end_activity(n: Npc) -> void:
+	jobs.release_food(n)  # also a dangling meal link without an activity (M4A-QA-3)
 	if n._activity == &"":
 		return
-	jobs.release_food(n)
 	if not n._table_id.is_empty() and _table_users.get(n._table_id, "") == n.id:
 		_table_users.erase(n._table_id)
 	n._table_id = ""
@@ -865,6 +873,27 @@ func _flag(n: Npc, what: String, on: bool, severity: AlertService.Severity, text
 		alerts.clear(key)
 
 
+func _raise_died(d: Dictionary) -> void:
+	alerts.set_alert(String(d["id"]) + "/died", AlertService.Severity.EMERGENCY,
+			"%s has died" % d["nickname"], d["tile"], d["id"])
+
+
+## Re-raises every need / colony / death alert from the current state (the
+## alert service is not saved). Call after loading, also while paused
+## (M4A-QA-6); load_snapshot calls it when alerts are attached.
+func refresh_alerts() -> void:
+	if alerts == null or not needs_enabled:
+		return
+	for n: Npc in _npcs.values():
+		n._alert_flags.clear()
+		for what in ["hungry", "starving", "exhausted", "collapsed"]:
+			alerts.clear("%s/%s" % [n.id, what])
+		_npc_alerts(n)
+	for d: Dictionary in _recent_deaths:
+		_raise_died(d)
+	_colony_alerts()
+
+
 func _colony_alerts() -> void:
 	if alerts == null:
 		return
@@ -923,7 +952,11 @@ func to_snapshot() -> Dictionary:
 			"in_bed": n._in_bed,
 			"collapsed_since": n._collapsed_since,
 		})
-	return {"npcs": list, "spawn_counter": _spawn_counter, "tick": _tick, "deaths": _deaths}
+	var recent: Array = []
+	for d: Dictionary in _recent_deaths:
+		recent.append({"id": String(d["id"]), "nickname": String(d["nickname"]), "tile": d["tile"]})
+	return {"npcs": list, "spawn_counter": _spawn_counter, "tick": _tick, "deaths": _deaths,
+			"recent_deaths": recent}
 
 
 ## Restores NPCs (paths are recomputed). NPCs on tiles that are no longer
@@ -967,6 +1000,19 @@ func load_snapshot(s: Dictionary) -> int:
 			if n._activity == &"sleep" and n._phase == &"asleep":
 				_fall_asleep(n, n._in_bed)  # recompute the bed / bedroom factor
 	_spawn_counter = maxi(_spawn_counter, _npcs.size())
+	_recent_deaths.clear()
+	var rd: Variant = s.get("recent_deaths", [])  # absent before the M4a fix round
+	if typeof(rd) == TYPE_ARRAY:
+		for e: Variant in rd:
+			if typeof(e) == TYPE_DICTIONARY and typeof((e as Dictionary).get("id")) == TYPE_STRING \
+					and typeof((e as Dictionary).get("nickname")) == TYPE_STRING \
+					and typeof((e as Dictionary).get("tile")) == TYPE_VECTOR2I:
+				_recent_deaths.append({"id": e["id"], "nickname": e["nickname"], "tile": e["tile"]})
+			else:
+				dropped += 1
+		while _recent_deaths.size() > RECENT_DEATHS_KEPT:
+			_recent_deaths.pop_front()
+	refresh_alerts()  # alerts are not saved: show them right away, even paused
 	npcs_changed.emit()
 	return dropped
 

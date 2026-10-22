@@ -588,6 +588,12 @@ func on_npc_fell(npc: Npc) -> void:
 ## reservations released; dig/build orders stay for other NPCs).
 ## Returns the released job id ("" if none).
 func release_npc(npc: Npc) -> String:
+	# M4A-QA-3: an NPC eating (or sleeping) lets go of its meal and table too.
+	if npc._activity != &"" or not npc._food_item.is_empty():
+		if _colony != null:
+			_colony._end_activity(npc)
+		else:
+			release_food(npc)
 	var job: Job = _jobs.get(npc.job_id)
 	if job == null or job.worker_id != npc.id:
 		var c := inventory.carried_by(npc.id)

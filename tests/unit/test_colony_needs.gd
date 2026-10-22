@@ -94,7 +94,7 @@ func test_needs_decay_while_working_hours() -> void:
 	var n := col.spawn_npc(Vector2i(5, 9))
 	_run(600)
 	assert_almost_eq(n.hunger, 90.0, 0.2, "-100 per day")
-	assert_almost_eq(n.stamina, 85.0, 0.2, "-100 per 16 h awake")
+	assert_almost_eq(n.stamina, 88.0, 0.2, "-100 per 20 h awake (600 ticks = 2.4 h)")
 	assert_almost_eq(n.health, 100.0, 0.001)
 	assert_eq(n.state, &"idle")
 
