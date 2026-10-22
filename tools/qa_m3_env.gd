@@ -67,6 +67,7 @@ func reload() -> Array[String]:
 		"buildings": ses.buildings.to_snapshot(), "designations": ses.designations.to_snapshot(),
 		"inventory": ses.inventory.to_snapshot(), "stockpiles": ses.stockpiles.to_snapshot(),
 		"crates": ses.crates.to_snapshot(), "build_orders": ses.build_orders.to_snapshot(),
+		"farming": ses.farming.to_snapshot(), "kitchens": ses.kitchens.to_snapshot(),
 		"colony": ses.colony.to_snapshot(), "jobs": ses.jobs.to_snapshot(),
 	}
 	p = bytes_to_var(var_to_bytes(p))
@@ -86,6 +87,8 @@ func reload() -> Array[String]:
 	dropped["crates"] = l.crates.load_snapshot(p["crates"])
 	dropped["orphan_crate_items"] = SaveService._rescue_orphan_crate_items(l)
 	dropped["build_orders"] = l.build_orders.load_snapshot(p["build_orders"])
+	dropped["farming"] = l.farming.load_snapshot(p["farming"])
+	dropped["kitchens"] = l.kitchens.load_snapshot(p["kitchens"])
 	dropped["colony"] = l.colony.load_snapshot(p["colony"])
 	dropped["jobs"] = l.jobs.load_snapshot(p["jobs"])
 	l.rooms.rebuild_all()

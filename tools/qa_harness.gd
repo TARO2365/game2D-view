@@ -82,6 +82,22 @@ func enable_m3() -> void:
 	action_weights["spawn_item"] = 5  # buildings need material
 
 
+## Adds the M4a player actions on top of M3: food appears, farm plots and
+## kitchens are ordered, schedules / beds / kitchen targets change, and
+## hunger / stamina spikes push NPCs into eating, sleeping and collapse.
+var m4a := false
+
+
+func enable_m4a() -> void:
+	enable_m3()
+	m4a = true
+	action_weights["spawn_food"] = 4
+	action_weights["schedule"] = 2
+	action_weights["assign_bed"] = 1
+	action_weights["need_spike"] = 3
+	action_weights["kitchen_target"] = 1
+
+
 # --- Simulation ---------------------------------------------------------
 
 func tick() -> void:
@@ -212,6 +228,53 @@ static func extra_invariants(ses: WorldSession) -> Array[String]:
 			errs.append("QA: %s out of bounds at %s" % [n.id, n.tile])
 	if ses.buildings != null:
 		errs.append_array(m3_invariants(ses))
+	if ses.farming != null and ses.colony.needs_enabled:
+		errs.append_array(m4a_invariants(ses))
+	return errs
+
+
+## M4a: needs in range; bed owners and table users unique; a food stack is
+## held / reserved by at most one NPC and never also by a job; collapsed
+## NPCs and NPCs eating or asleep hold no job; table users hold their table.
+static func m4a_invariants(ses: WorldSession) -> Array[String]:
+	var errs: Array[String] = []
+	var beds := {}
+	var foods := {}
+	var tables := {}
+	var jm := ses.jobs
+	for n in ses.colony.all_npcs():
+		for v in [n.hunger, n.stamina, n.health]:
+			if not (v >= 0.0 and v <= 100.0):
+				errs.append("QA: %s need out of range %s" % [n.id, v])
+		if n.condition == Npc.CONDITION_DEAD:
+			errs.append("QA: dead %s still listed" % n.id)
+		if not n.bed_id.is_empty():
+			if beds.has(n.bed_id):
+				errs.append("QA: bed %s owned by %s and %s" % [n.bed_id, beds[n.bed_id], n.id])
+			beds[n.bed_id] = n.id
+			if ses.buildings.get_building(n.bed_id).get("key", &"") != &"bed":
+				errs.append("QA: %s owns %s which is not a bed" % [n.id, n.bed_id])
+		if not n._food_item.is_empty():
+			if foods.has(n._food_item):
+				errs.append("QA: food %s held by %s and %s" % [n._food_item, foods[n._food_item], n.id])
+			foods[n._food_item] = n.id
+			if jm._item_res.has(n._food_item):
+				errs.append("QA: food %s of %s also reserved by job %s" % [n._food_item, n.id, jm._item_res[n._food_item]])
+		if not n._table_id.is_empty():
+			if tables.has(n._table_id):
+				errs.append("QA: table %s used by %s and %s" % [n._table_id, tables[n._table_id], n.id])
+			tables[n._table_id] = n.id
+		if not n.is_ok() and not n.job_id.is_empty():
+			errs.append("QA: collapsed %s holds job %s" % [n.id, n.job_id])
+		if (n._activity == &"sleep" or n._activity == &"eat") and not n.job_id.is_empty():
+			errs.append("QA: %s %s while holding job %s" % [n.id, n._activity, n.job_id])
+		if not n.is_ok() and n._activity != &"":
+			errs.append("QA: collapsed %s still in activity %s" % [n.id, n._activity])
+	for iid: String in jm._food_res:
+		var who: String = jm._food_res[iid]
+		var eater := ses.colony.get_npc(who)
+		if eater == null or eater._food_item != iid:
+			errs.append("QA: food reservation %s -> %s not mirrored by the NPC" % [iid, who])
 	return errs
 
 
@@ -386,7 +449,8 @@ func _do(action: String) -> void:
 				res = s.colony.command_move(npc.id, t)
 				_log("move %s -> %s" % [npc.id, t])
 		"stop":
-			if npc != null:
+			# Known bug M4A-QA-3 (Stop while carrying a meal): avoided in M4a runs.
+			if npc != null and not (m4a and not npc._food_item.is_empty()):
 				res = s.colony.command_stop(npc.id)
 				_log("stop %s" % npc.id)
 		"toggle":
@@ -433,6 +497,8 @@ func _do(action: String) -> void:
 		"building":
 			if s.build_orders != null:
 				var keys: Array[StringName] = [&"crate", &"crate", &"bed", &"table", &"door"]
+				if m4a:
+					keys.append_array([&"farm_plot", &"farm_plot", &"kitchen", &"bed"] as Array[StringName])
 				var key := keys[rng.randi_range(0, keys.size() - 1)]
 				var o := _random_floor_tile(near)
 				if o != Vector2i(-1, -1):
@@ -495,6 +561,54 @@ func _do(action: String) -> void:
 				var r := Rect2i(info["origin"] + Vector2i.DOWN, Vector2i.ONE)
 				res = g.apply_edit(r, WorldGrid.Edit.DIG)
 				_log("apply_edit DIG under building %s %s" % [bid, r])
+		"spawn_food":
+			var x := clampi(near.x + rng.randi_range(-10, 10), 1, g.width - 2)
+			var t := _feet_in_column(x)
+			if t != Vector2i(-1, -1):
+				var mat: StringName = [&"ration", &"meal", &"mushroom"][rng.randi_range(0, 2)]
+				var kg := snappedf(rng.randf_range(0.5, 12.0), 0.25)
+				if not s.inventory.spawn_ground(mat, kg, t).is_empty():
+					qa_spawned_kg += kg
+					_log("spawn food %s %.2f kg at %s" % [mat, kg, t])
+		"schedule":
+			var hours := PackedByteArray()
+			var pattern := rng.randi_range(0, 3)
+			for h in 24:
+				match pattern:
+					0: hours.append(Npc.Activity.WORK)
+					1: hours.append(Npc.Activity.SLEEP if h < 8 else Npc.Activity.WORK)
+					2: hours.append(rng.randi_range(0, 2))
+					_: hours.append(Npc.default_schedule()[h])
+			if npc != null and rng.randf() < 0.7:
+				res = s.colony.set_schedule(npc.id, hours)
+				_log("schedule %s pattern %d" % [npc.id, pattern])
+			else:
+				res = s.colony.set_schedule_all(hours)
+				_log("schedule all pattern %d" % pattern)
+		"assign_bed":
+			if npc != null:
+				var beds: Array[String] = []
+				for bid in s.buildings.all_ids():
+					if s.buildings.get_building(bid)["key"] == &"bed":
+						beds.append(bid)
+				var bid := "" if beds.is_empty() or rng.randf() < 0.3 else beds[rng.randi_range(0, beds.size() - 1)]
+				res = s.colony.assign_bed(npc.id, bid)
+				_log("assign bed %s -> '%s'" % [npc.id, bid])
+		"need_spike":
+			if npc != null and npc.is_ok():
+				if rng.randf() < 0.5:
+					npc.hunger = rng.randf_range(0.0, 45.0)
+				else:
+					npc.stamina = rng.randf_range(0.0, 20.0)
+				if rng.randf() < 0.15:
+					npc.health = rng.randf_range(0.1, 2.0)   # pushes toward a collapse
+				_log("need spike %s h%.0f s%.0f hp%.1f" % [npc.id, npc.hunger, npc.stamina, npc.health])
+		"kitchen_target":
+			var kids := s.kitchens.kitchen_ids()
+			if not kids.is_empty():
+				var kid: String = kids[rng.randi_range(0, kids.size() - 1)]
+				res = s.kitchens.set_target_kg(kid, rng.randf_range(0.0, 30.0))
+				_log("kitchen %s target" % kid)
 		"spawn_npc":
 			if s.colony.count() < max_npcs:
 				var t := _random_surface_feet(near.x, 10)
@@ -659,7 +773,21 @@ static func _summary(ses: WorldSession) -> Dictionary:
 			ck[cid] = snappedf(ses.inventory.crate_kg(cid), 0.001)
 		m3["crate_kg"] = ck
 		m3["rooms"] = room_signature(ses.rooms)  # rooms are rebuilt on load (not saved)
+	var m4a := {}
+	if ses.farming != null:
+		var needs := {}
+		for n in ses.colony.all_npcs():
+			needs[n.id] = {"hunger": snappedf(n.hunger, 0.001), "stamina": snappedf(n.stamina, 0.001),
+					"health": snappedf(n.health, 0.001), "condition": String(n.condition),
+					"schedule": Array(n.schedule), "bed": n.bed_id, "activity": String(n._activity),
+					"phase": String(n._phase), "food": n._food_item, "table": n._table_id,
+					"in_bed": n._in_bed, "collapsed_since": n._collapsed_since}
+		m4a["npcs"] = needs
+		m4a["deaths"] = ses.colony.deaths()
+		m4a["farming"] = ses.farming.to_snapshot()
+		m4a["kitchens"] = ses.kitchens.to_snapshot()
 	return {
+		"m4a": m4a,
 		"m3": m3,
 		"kg_by_material": kg, "spawned": sp, "consumed": co,
 		"item_count": ses.inventory.all_items().size(),

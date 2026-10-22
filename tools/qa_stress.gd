@@ -5,7 +5,8 @@ extends SceneTree
 ## Usage:
 ##   godot --headless --path . -s res://tools/qa_stress.gd -- [ticks] [seeds] [first_seed] [npcs]
 ## Defaults: 20000 ticks, 5 seeds, first seed 1, 8 NPCs. 5th arg "m3" adds M3 actions (buildings,
-## deconstruct, crate filters) and compares rooms with a full rebuild every 50 ticks. Exit 1 on any error.
+## deconstruct, crate filters) and compares rooms with a full rebuild every 50 ticks; "m4a" adds
+## M4a actions on top (food, farms, kitchens, schedules, beds, need spikes). Exit 1 on any error.
 
 const QA := preload("res://tools/qa_harness.gd")
 const SIZE := Vector2i(128, 96)
@@ -17,10 +18,8 @@ func _init() -> void:
 	var seeds := int(args[1]) if args.size() > 1 else 5
 	var first := int(args[2]) if args.size() > 2 else 1
 	var npcs := int(args[3]) if args.size() > 3 else 8
-	var m3 := args.size() > 4 and args[4] == "m3"
-	if m3:
-		QA.tolerate_stale_tile_index = true  # known bug M3-QA-2 (stale index only); everything else strict
-		print("m3 mode: stale JobManager tile-index entries (known bug M3-QA-2) are tolerated")
+	var m4a := args.size() > 4 and args[4] == "m4a"
+	var m3 := m4a or (args.size() > 4 and args[4] == "m3")
 	var reg := TileRegistry.load_default()
 	var failed := false
 	var dir := "user://qa_stress_%d" % Time.get_ticks_usec()
@@ -28,7 +27,10 @@ func _init() -> void:
 	for sd in range(first, first + seeds):
 		var h := QA.new(reg, 1000 + sd, SIZE, sd, npcs)
 		if m3:
-			h.enable_m3()
+			if m4a:
+				h.enable_m4a()
+			else:
+				h.enable_m3()
 		var next_action := 1
 		var next_save := h.rng.randi_range(500, 3000)
 		var errs: Array[String] = []
@@ -63,6 +65,8 @@ func _init() -> void:
 				h.stuck_reports.size()]
 		print(line)
 		if m3:
+			if m4a:
+				print("  m4a: deaths %d  alive %d  eaten %s  alerts %d" % [h.s.colony.deaths(), h.s.colony.count(), h.s.inventory.consumed_kg_by_material(), h.s.alerts.count()])
 			print("  m3: ever placed %d of %d orders; now buildings %d (crates %d) building orders %d rooms %d crate kg %.0f" % [h.s.ids.peek_next(&"bld") - 1, h.s.ids.peek_next(&"bord") - 1, h.s.buildings.count(),
 					h.s.crates.crate_ids().size(), h.s.build_orders.count(), h.s.rooms.room_count(), _crate_kg(h)])
 		print("  progress (kg dug+built) in each segment between loads: %s" % [progress_after_loads])

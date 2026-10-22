@@ -6,7 +6,7 @@ extends GutTest
 ## incremental rooms == full rebuild every 25 ticks, save/load at random
 ## moments (memory + real files) with buildings/orders/filters/crate kg/rooms
 ## compared. Long version: tools/qa_stress.gd -- 20000 5 1 8 m3.
-## Known bug M3-QA-2 (stale tile-index entry only) is tolerated here.
+## Strict: M3-QA-2 (stale tile index) was fixed on main, nothing is tolerated.
 
 const QA := preload("res://tools/qa_harness.gd")
 const FS := preload("res://tests/helpers/fs_util.gd")
@@ -19,7 +19,7 @@ var dir: String
 
 func before_all() -> void:
 	reg = TileRegistry.load_default()
-	QA.tolerate_stale_tile_index = true
+	QA.tolerate_stale_tile_index = false
 
 
 func after_all() -> void:
