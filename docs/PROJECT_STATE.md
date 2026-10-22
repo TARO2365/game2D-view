@@ -1,6 +1,6 @@
 # PROJECT_STATE.md
 
-**Updated:** 2026-10-21 | **M0–M2:** Closed | **M3:** In review (handoff `docs/MILESTONE_HANDOFF.md`) | **Next authorized:** none
+**Updated:** 2026-10-22 | **M0–M2:** Closed | **M3:** Closed | **M4a:** In review (handoff `docs/MILESTONE_HANDOFF.md`) | **Next authorized:** none
 
 ## What exists (playable)
 - Main menu: up to 3 stored worlds, one played at a time; New World with name, random seed (re-roll), size.
