@@ -4,10 +4,23 @@ Godot 4.7.2 / GDScript 2D underground colony sim. Owner communicates in Thai;
 reports to the owner are in Thai, code/identifiers/tech docs in English.
 
 ## Start of every session (mandatory)
-1. Read `PROJECT_MASTER_SPEC.md` (authoritative design; never edit without owner approval).
-2. Read `docs/PROJECT_STATE.md` and `docs/MILESTONE_HANDOFF.md`.
-3. Check `docs/ROADMAP.md` for which milestone is **authorized**. Only work inside it.
-4. Check `docs/DECISIONS.md` and `docs/OPEN_QUESTIONS.md` before assuming anything.
+1. Read **`PROGRESS.md`** first (one-page summary: done, open issues, next step).
+2. Read `PROJECT_MASTER_SPEC.md` (authoritative design; never edit without owner approval).
+3. Read `docs/PROJECT_STATE.md` and the latest handoff (`docs/MILESTONE_HANDOFF.md`; older ones in `docs/handoffs/`).
+4. Check `docs/ROADMAP.md` for which milestone is **authorized**. Only work inside it. Plans live in `docs/plans/`,
+   module contracts in `docs/contracts/` (latest: `M4A_CONTRACTS.md`).
+5. Check `docs/DECISIONS.md` and `docs/OPEN_QUESTIONS.md` before assuming anything.
+6. Run `powershell -File tools/run_tests.ps1` to confirm a green baseline before changing anything.
+
+## Working practice (learned M0–M4a)
+- Per milestone: owner approves → Lead writes plan → owner approves plan → Lead writes contracts → specialist agents in
+  **separate worktrees** (no shared files) → Lead reviews diff + merges + runs tests itself → independent QA round →
+  fix round → handoff. Report to the owner in Thai; end with STATUS: AWAITING OWNER REVIEW / APPROVAL.
+- Never trust an agent's numbers without re-running tests/benches on main yourself.
+- Agents hit usage limits often: resume them with a message instead of restarting; ask them to commit in parts.
+- The owner's AI images often land in `C:\Users\Taro1123\Documents\ChatGPT\asset ai\assets\incoming` — copy new files to
+  `assets/incoming/` (git-ignored), then run `tools/art_import.gd`. Never commit raw images.
+- A `node` process from `.cache\codex-runtimes` belongs to the owner's Codex — never kill it.
 
 ## Hard rules
 - Never start, or implement features of, a milestone the owner has not authorized.
@@ -40,7 +53,11 @@ Agents may not edit another role's paths concurrently. Cross-module change = con
 
 ## Commands
 ```
-powershell -File tools/run_tests.ps1                  # import + full GUT suite, exit!=0 on failure
+powershell -File tools/run_tests.ps1                  # import + full GUT suite, exit!=0 on failure (also on unloadable scripts)
+powershell -File tools/run_stress.ps1                 # slow stress suite (tests/stress)
+godot --headless --path . -s res://tools/bench_npcs.gd    # 100-NPC tick benchmark
+godot --headless --path . -s res://tools/qa_bench.gd -- 600   # QA perf scenarios (crates, unreachable, items)
+godot --headless --path . -s res://tools/art_import.gd -- --src <dir with raw owner images>   # import AI art
 powershell -File tools/export.ps1 -Preset Web         # build/web/
 powershell -File tools/export.ps1 -Preset "Windows Desktop"
 node tools/serve_web.js 8060                          # http://localhost:8060
